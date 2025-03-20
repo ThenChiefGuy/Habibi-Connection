@@ -66,6 +66,7 @@ function Chat() {
       const messagesWithNames = await Promise.all(
         snapshot.docs.map(async (doc) => {
           const message = doc.data();
+          console.log("Message data:", message); // Log message data for debugging
           const userRef = firestoreDoc(db, "users", message.sender);
           const userDoc = await getDoc(userRef);
           return {
@@ -194,7 +195,7 @@ function Chat() {
 
   // Filter messages based on search query
   const filteredMessages = messages.filter((msg) =>
-    msg.text.toLowerCase().includes(searchQuery.toLowerCase())
+    msg.text && msg.text.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   // Show context menu
@@ -274,31 +275,33 @@ function Chat() {
         {/* Messages area */}
         <div className="flex-1 p-4 overflow-y-auto">
           {filteredMessages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`p-2 my-2 rounded max-w-xs ${
-                msg.sender === auth.currentUser?.uid
-                  ? "bg-blue-500 text-white ml-auto"
-                  : "bg-gray-200 mr-auto"
-              }`}
-              onContextMenu={(e) => handleContextMenu(e, msg.id)}
-            >
-              <p className="font-bold">{msg.senderName}</p>
-              <div className="flex justify-between items-end">
-                <p>{msg.text}</p>
-                {msg.timestamp && (
-                  <p className="text-xs text-gray-500 ml-2">{msg.timestamp}</p>
+            msg.text && (
+              <div
+                key={msg.id}
+                className={`p-2 my-2 rounded max-w-xs ${
+                  msg.sender === auth.currentUser?.uid
+                    ? "bg-blue-500 text-white ml-auto"
+                    : "bg-gray-200 mr-auto"
+                }`}
+                onContextMenu={(e) => handleContextMenu(e, msg.id)}
+              >
+                <p className="font-bold">{msg.senderName}</p>
+                <div className="flex justify-between items-end">
+                  <p>{msg.text}</p>
+                  {msg.timestamp && (
+                    <p className="text-xs text-gray-500 ml-2">{msg.timestamp}</p>
+                  )}
+                </div>
+                {msg.quotedMessageId && (
+                  <div className="bg-gray-100 p-2 rounded mt-2">
+                    <p className="text-sm text-gray-700">
+                      Zitiert:{" "}
+                      {messages.find((m) => m.id === msg.quotedMessageId)?.text}
+                    </p>
+                  </div>
                 )}
               </div>
-              {msg.quotedMessageId && (
-                <div className="bg-gray-100 p-2 rounded mt-2">
-                  <p className="text-sm text-gray-700">
-                    Zitiert:{" "}
-                    {messages.find((m) => m.id === msg.quotedMessageId)?.text}
-                  </p>
-                </div>
-              )}
-            </div>
+            )
           ))}
           <div ref={messagesEndRef} />
         </div>
