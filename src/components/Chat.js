@@ -73,7 +73,7 @@ function Chat() {
     return () => {
       window.removeEventListener("beforeunload", () => {});
     };
-  }, [auth.currentUser]);
+  }, []); // Removed `auth.currentUser` from the dependency array
 
   // Get chat ID
   const getChatId = (userId1, userId2) => [userId1, userId2].sort().join("_");
