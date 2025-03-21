@@ -12,7 +12,7 @@ function Login() {
   const handleLogin = async () => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      if (email === "admin@habibi-connections.com") { // Ersetze dies mit deiner Admin-E-Mail
+      if (email === "habibi-connections.admin@gmail.com") { // Ersetze dies mit deiner Admin-E-Mail
         navigate("/admin");
       } else {
         navigate("/chat");
