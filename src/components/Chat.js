@@ -36,9 +36,10 @@ function Chat() {
   const [darkMode, setDarkMode] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [typingUser, setTypingUser] = useState(null);
+  const [onlineStatus, setOnlineStatus] = useState({});
   const messagesEndRef = useRef(null);
 
-  // Lade alle Benutzer
+  // Load all users
   useEffect(() => {
     const loadUsers = async () => {
       const usersSnapshot = await getDocs(collection(db, "users"));
@@ -47,10 +48,46 @@ function Chat() {
     loadUsers();
   }, []);
 
-  // Erstelle eine eindeutige Chat-ID für private Chats
+  // Track online status of users
+  useEffect(() => {
+    const onlineStatusRef = collection(db, "onlineStatus");
+    const unsubscribe = onSnapshot(onlineStatusRef, (snapshot) => {
+      const status = {};
+      snapshot.docs.forEach((doc) => {
+        status[doc.id] = doc.data().isOnline;
+      });
+      setOnlineStatus(status);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Set current user's online status
+  useEffect(() => {
+    if (!auth.currentUser) return;
+
+    const onlineStatusRef = firestoreDoc(db, "onlineStatus", auth.currentUser.uid);
+    const setOnline = async () => {
+      await setDoc(onlineStatusRef, { isOnline: true });
+    };
+
+    setOnline();
+
+    // Set offline when user leaves
+    const handleBeforeUnload = async () => {
+      await setDoc(onlineStatusRef, { isOnline: false });
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [auth.currentUser]);
+
+  // Create a unique chat ID for private chats
   const getChatId = (userId1, userId2) => [userId1, userId2].sort().join("_");
 
-  // Lade Nachrichten (öffentlich oder privat)
+  // Load messages (public or private)
   useEffect(() => {
     let q;
     if (selectedUser) {
@@ -72,22 +109,23 @@ function Chat() {
           return {
             id: doc.id,
             ...message,
-            senderName: userDoc.exists() ? userDoc.data().name : "Unbekannt",
+            senderName: userDoc.exists() ? userDoc.data().name : "Unknown",
             timestamp: message.timestamp?.toDate().toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
             }),
-            reactions: message.reactions || {}, // Standardmäßig leeres Objekt für Reaktionen
+            reactions: message.reactions || {},
+            isEdited: message.isEdited || false,
           };
         })
       );
       setMessages(messagesWithNames);
 
-      // Benachrichtigung für neue Nachrichten im privaten Chat
+      // Notification for new messages in private chat
       if (selectedUser && messagesWithNames.length > messages.length) {
         const lastMessage = messagesWithNames[messagesWithNames.length - 1];
         if (lastMessage.sender !== auth.currentUser.uid) {
-          setNewMessageNotification(`Neue Nachricht von ${selectedUser.name}`);
+          setNewMessageNotification(`New message from ${selectedUser.name}`);
           setTimeout(() => setNewMessageNotification(null), 3000);
         }
       }
@@ -96,7 +134,7 @@ function Chat() {
     return () => unsubscribe();
   }, [selectedUser, messages.length]);
 
-  // Reaktion hinzufügen/entfernen
+  // Add/remove reaction
   const handleReaction = async (messageId, emoji) => {
     try {
       const message = messages.find((msg) => msg.id === messageId);
@@ -109,20 +147,19 @@ function Chat() {
       const userReactions = reactions[emoji] || [];
 
       if (userReactions.includes(auth.currentUser.uid)) {
-        // Reaktion entfernen
+        // Remove reaction
         reactions[emoji] = userReactions.filter((uid) => uid !== auth.currentUser.uid);
-        // Wenn keine Benutzer mehr übrig sind, entferne die Reaktion vollständig
         if (reactions[emoji].length === 0) {
           delete reactions[emoji];
         }
       } else {
-        // Reaktion hinzufügen
+        // Add reaction
         reactions[emoji] = [...userReactions, auth.currentUser.uid];
       }
 
       await updateDoc(messageRef, { reactions });
     } catch (error) {
-      console.error("Fehler beim Hinzufügen/Entfernen der Reaktion:", error);
+      console.error("Error adding/removing reaction:", error);
     }
   };
 
@@ -132,7 +169,7 @@ function Chat() {
 
     const typingStatusRef = firestoreDoc(db, "typingStatus", auth.currentUser.uid);
 
-    // Update typing status when the user starts or stops typing
+    // Update typing status
     const handleTyping = async (isTyping) => {
       await setDoc(typingStatusRef, {
         isTyping,
@@ -140,7 +177,6 @@ function Chat() {
       });
     };
 
-    // Set a timeout to reset typing status after 2 seconds of inactivity
     let typingTimeout;
     const onInputChange = () => {
       if (!isTyping) {
@@ -154,7 +190,6 @@ function Chat() {
       }, 2000);
     };
 
-    // Listen for input changes
     const input = document.querySelector('input[type="text"]');
     input.addEventListener("input", onInputChange);
 
@@ -183,7 +218,7 @@ function Chat() {
     return () => unsubscribe();
   }, [selectedUser]);
 
-  // Nachricht senden (öffentlich oder privat)
+  // Send message (public or private)
   const sendMessage = async () => {
     if (!newMessage.trim() || !auth.currentUser) return;
     try {
@@ -192,8 +227,10 @@ function Chat() {
         sender: auth.currentUser.uid,
         timestamp: serverTimestamp(),
         quotedMessageId: quotedMessage?.id || null,
-        reactions: {}, // Standardmäßig leeres Objekt für Reaktionen
+        reactions: {},
+        isEdited: false,
       };
+
       if (selectedUser) {
         const chatId = getChatId(auth.currentUser.uid, selectedUser.id);
         await addDoc(collection(db, "privateMessages"), {
@@ -207,11 +244,11 @@ function Chat() {
       setNewMessage("");
       setQuotedMessage(null);
     } catch (error) {
-      console.error("Fehler beim Senden der Nachricht:", error);
+      console.error("Error sending message:", error);
     }
   };
 
-  // Nachricht löschen
+  // Delete message
   const deleteMessage = async (messageId) => {
     try {
       const message = messages.find((msg) => msg.id === messageId);
@@ -224,16 +261,34 @@ function Chat() {
         prevMessages.filter((msg) => msg.id !== messageId)
       );
     } catch (error) {
-      console.error("Fehler beim Löschen der Nachricht:", error);
+      console.error("Error deleting message:", error);
     }
   };
 
-  // Scrolle zum Ende der Nachrichten
+  // Edit message
+  const editMessage = async (messageId, newText) => {
+    try {
+      const message = messages.find((msg) => msg.id === messageId);
+      if (!message || message.sender !== auth.currentUser.uid) return;
+
+      const collectionName = selectedUser ? "privateMessages" : "messages";
+      const messageRef = firestoreDoc(db, collectionName, messageId);
+
+      await updateDoc(messageRef, {
+        text: newText,
+        isEdited: true,
+      });
+    } catch (error) {
+      console.error("Error editing message:", error);
+    }
+  };
+
+  // Scroll to the bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Schließe das Kontextmenü, wenn außerhalb geklickt wird
+  // Close context menu when clicking outside
   useEffect(() => {
     const handleClickOutside = () => {
       if (contextMenu.visible) {
@@ -251,7 +306,7 @@ function Chat() {
         <div className="p-4 border-b">
           <input
             type="text"
-            placeholder="Benutzer suchen..."
+            placeholder="Search users..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className={`w-full p-2 rounded-lg ${darkMode ? "bg-gray-700 text-white" : "bg-gray-50"}`}
@@ -265,7 +320,7 @@ function Chat() {
               darkMode ? "hover:bg-gray-700" : "hover:bg-gray-50"
             }`}
           >
-            Öffentlicher Chat
+            Public Chat
           </button>
           {users
             .filter((user) => user.name.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -278,7 +333,7 @@ function Chat() {
                   darkMode ? "hover:bg-gray-700 text-white" : "hover:bg-gray-50"
                 }`}
               >
-                {user.name}
+                {user.name} {onlineStatus[user.id] && "🟢"}
               </button>
             ))}
         </div>
@@ -290,14 +345,22 @@ function Chat() {
         <div className={`p-4 border-b flex justify-between items-center ${
           darkMode ? "bg-gray-800 border-gray-700" : "bg-white"
         }`}>
-          <h2>{selectedUser ? `Chat mit ${selectedUser.name}` : "Öffentlicher Chat"}</h2>
-          <input
-            type="text"
-            placeholder="Nachrichten suchen..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className={`p-1 border rounded-lg text-sm ${darkMode ? "bg-gray-700 text-white" : "bg-gray-50"}`}
-          />
+          <h2>{selectedUser ? `Chat with ${selectedUser.name}` : "Public Chat"}</h2>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Search messages..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className={`p-1 border rounded-lg text-sm ${darkMode ? "bg-gray-700 text-white" : "bg-gray-50"}`}
+            />
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className="p-2 bg-gray-200 rounded-lg"
+            >
+              {darkMode ? "🌙" : "☀️"}
+            </button>
+          </div>
         </div>
 
         {/* Messages */}
@@ -325,13 +388,13 @@ function Chat() {
               >
                 <p className="font-bold">{msg.senderName}</p>
                 <div className="flex justify-between items-end">
-                  <p>{msg.text || "Nachricht nicht verfügbar"}</p>
+                  <p>{msg.text || "Message not available"}</p>
                   {msg.timestamp && <p className="text-xs text-gray-500 ml-2">{msg.timestamp}</p>}
                 </div>
-                {/* Reaktionen anzeigen (aktualisiert) */}
+                {/* Reactions */}
                 <div className="flex flex-wrap mt-1">
                   {Object.entries(msg.reactions || {}).map(([emoji, users]) => (
-                    users.length > 0 && ( // Nur anzeigen, wenn Benutzer vorhanden sind
+                    users.length > 0 && (
                       <div key={emoji} className="flex items-center mr-2">
                         <span className="text-sm">{emoji}</span>
                         <span className="text-xs text-gray-500 ml-1">{users.length}</span>
@@ -371,7 +434,7 @@ function Chat() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyPress={(e) => e.key === "Enter" && sendMessage()}
-            placeholder="Schreibe eine Nachricht..."
+            placeholder="Type a message..."
             className={`flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               darkMode ? "bg-gray-700 text-white" : "bg-gray-50"
             }`}
@@ -380,7 +443,7 @@ function Chat() {
             onClick={sendMessage}
             className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
-            Senden
+            Send
           </button>
         </div>
 
@@ -416,20 +479,20 @@ function Chat() {
             </div>
             <button
               onClick={() => {
-                const newText = prompt("Neuer Text:", messages.find((msg) => msg.id === contextMenu.messageId).text);
+                const newText = prompt("Edit message:", messages.find((msg) => msg.id === contextMenu.messageId).text);
                 if (newText) {
                   editMessage(contextMenu.messageId, newText);
                 }
               }}
               className="block w-full text-left p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-t-lg"
             >
-              Bearbeiten
+              Edit
             </button>
             <button
               onClick={() => deleteMessage(contextMenu.messageId)}
               className="block w-full text-left p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-b-lg text-red-500"
             >
-              Löschen
+              Delete
             </button>
           </div>
         )}
