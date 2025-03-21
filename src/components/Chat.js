@@ -335,7 +335,7 @@ function Chat() {
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
             className="p-2 bg-gray-200 rounded-lg"
           >
-            😊
+            🥹
           </button>
           {showEmojiPicker && (
             <div className="absolute bottom-16">
