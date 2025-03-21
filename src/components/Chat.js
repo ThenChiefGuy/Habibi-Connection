@@ -35,9 +35,11 @@ function Chat() {
   const [darkMode, setDarkMode] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editedText, setEditedText] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [typingUser, setTypingUser] = useState(null);
   const messagesEndRef = useRef(null);
 
-  // Lade alle Benutzer
+  // Load all users
   useEffect(() => {
     const loadUsers = async () => {
       const usersSnapshot = await getDocs(collection(db, "users"));
@@ -46,10 +48,10 @@ function Chat() {
     loadUsers();
   }, []);
 
-  // Erstelle eine eindeutige Chat-ID für private Chats
+  // Get unique chat ID for private chats
   const getChatId = (userId1, userId2) => [userId1, userId2].sort().join("_");
 
-  // Lade Nachrichten (öffentlich oder privat)
+  // Load messages (public or private)
   useEffect(() => {
     let q;
     if (selectedUser) {
@@ -71,7 +73,7 @@ function Chat() {
           return {
             id: doc.id,
             ...message,
-            senderName: userDoc.exists() ? userDoc.data().name : "Unbekannt",
+            senderName: userDoc.exists() ? userDoc.data().name : "Unknown",
             timestamp: message.timestamp?.toDate().toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
@@ -81,11 +83,11 @@ function Chat() {
       );
       setMessages(messagesWithNames);
 
-      // Benachrichtigung für neue Nachrichten im privaten Chat
+      // Notification for new messages in private chat
       if (selectedUser && messagesWithNames.length > messages.length) {
         const lastMessage = messagesWithNames[messagesWithNames.length - 1];
         if (lastMessage.sender !== auth.currentUser.uid) {
-          setNewMessageNotification(`Neue Nachricht von ${selectedUser.name}`);
+          setNewMessageNotification(`New message from ${selectedUser.name}`);
           setTimeout(() => setNewMessageNotification(null), 3000);
         }
       }
@@ -94,7 +96,64 @@ function Chat() {
     return () => unsubscribe();
   }, [selectedUser, messages.length]);
 
-  // Nachricht senden (öffentlich oder privat)
+  // Typing indicator logic
+  useEffect(() => {
+    if (!selectedUser) return;
+
+    const typingStatusRef = firestoreDoc(db, "typingStatus", auth.currentUser.uid);
+
+    // Update typing status when the user starts or stops typing
+    const handleTyping = async (isTyping) => {
+      await setDoc(typingStatusRef, {
+        isTyping,
+        timestamp: serverTimestamp(),
+      });
+    };
+
+    // Set a timeout to reset typing status after 2 seconds of inactivity
+    let typingTimeout;
+    const onInputChange = () => {
+      if (!isTyping) {
+        setIsTyping(true);
+        handleTyping(true);
+      }
+      clearTimeout(typingTimeout);
+      typingTimeout = setTimeout(() => {
+        setIsTyping(false);
+        handleTyping(false);
+      }, 2000);
+    };
+
+    // Listen for input changes
+    const input = document.querySelector('input[type="text"]');
+    input.addEventListener("input", onInputChange);
+
+    return () => {
+      input.removeEventListener("input", onInputChange);
+      clearTimeout(typingTimeout);
+    };
+  }, [selectedUser, isTyping]);
+
+  // Listen for typing status of the other user
+  useEffect(() => {
+    if (!selectedUser) return;
+
+    const typingStatusRef = firestoreDoc(db, "typingStatus", selectedUser.id);
+    const unsubscribe = onSnapshot(typingStatusRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        if (data.isTyping) {
+          setTypingUser(selectedUser.name);
+        } else {
+          setTypingUser(null);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [selectedUser]);
+
+  // Send message (public or private)
   const sendMessage = async () => {
     if (!newMessage.trim() || !auth.currentUser) return;
     try {
@@ -117,11 +176,11 @@ function Chat() {
       setNewMessage("");
       setQuotedMessage(null);
     } catch (error) {
-      console.error("Fehler beim Senden der Nachricht:", error);
+      console.error("Error sending message:", error);
     }
   };
 
-  // Nachricht löschen
+  // Delete message
   const deleteMessage = async (messageId) => {
     try {
       const message = messages.find((msg) => msg.id === messageId);
@@ -134,11 +193,11 @@ function Chat() {
         prevMessages.filter((msg) => msg.id !== messageId)
       );
     } catch (error) {
-      console.error("Fehler beim Löschen der Nachricht:", error);
+      console.error("Error deleting message:", error);
     }
   };
 
-  // Nachricht bearbeiten
+  // Edit message
   const editMessage = async (messageId, newText) => {
     try {
       const message = messages.find((msg) => msg.id === messageId);
@@ -156,16 +215,16 @@ function Chat() {
       );
       setEditingMessageId(null);
     } catch (error) {
-      console.error("Fehler beim Bearbeiten der Nachricht:", error);
+      console.error("Error editing message:", error);
     }
   };
 
-  // Scrolle zum Ende der Nachrichten
+  // Scroll to the end of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Schließe das Kontextmenü, wenn außerhalb geklickt wird
+  // Close context menu when clicking outside
   useEffect(() => {
     const handleClickOutside = () => {
       if (contextMenu.visible) {
@@ -178,12 +237,12 @@ function Chat() {
 
   return (
     <div className={`flex h-screen ${darkMode ? "bg-gray-900 text-white" : "bg-gray-100"}`}>
-      {/* Benutzerliste auf der linken Seite (schmaler gemacht) */}
+      {/* Sidebar */}
       <div className={`w-64 border-r ${darkMode ? "bg-gray-800 border-gray-700" : "bg-white"}`}>
         <div className="p-4 border-b">
           <input
             type="text"
-            placeholder="Benutzer suchen..."
+            placeholder="Search users..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className={`w-full p-2 rounded-lg ${darkMode ? "bg-gray-700 text-white" : "bg-gray-50"}`}
@@ -197,7 +256,7 @@ function Chat() {
               darkMode ? "hover:bg-gray-700" : "hover:bg-gray-50"
             }`}
           >
-            Öffentlicher Chat
+            Public Chat
           </button>
           {users
             .filter((user) => user.name.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -216,23 +275,23 @@ function Chat() {
         </div>
       </div>
 
-      {/* Chatbereich auf der rechten Seite */}
+      {/* Main Chat Area */}
       <div className="flex-1 flex flex-col">
-        {/* Header mit ausgewähltem Benutzer */}
+        {/* Header */}
         <div className={`p-4 border-b flex justify-between items-center ${
           darkMode ? "bg-gray-800 border-gray-700" : "bg-white"
         }`}>
-          <h2>{selectedUser ? `Chat mit ${selectedUser.name}` : "Öffentlicher Chat"}</h2>
+          <h2>{selectedUser ? `Chat with ${selectedUser.name}` : "Public Chat"}</h2>
           <input
             type="text"
-            placeholder="Nachrichten suchen..."
+            placeholder="Search messages..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className={`p-1 border rounded-lg text-sm ${darkMode ? "bg-gray-700 text-white" : "bg-gray-50"}`}
           />
         </div>
 
-        {/* Nachrichtenbereich */}
+        {/* Messages */}
         <div className="flex-1 p-4 overflow-y-auto">
           {messages
             .filter((msg) => msg.text && msg.text.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -257,15 +316,20 @@ function Chat() {
               >
                 <p className="font-bold">{msg.senderName}</p>
                 <div className="flex justify-between items-end">
-                  <p>{msg.text || "Nachricht nicht verfügbar"}</p>
+                  <p>{msg.text || "Message unavailable"}</p>
                   {msg.timestamp && <p className="text-xs text-gray-500 ml-2">{msg.timestamp}</p>}
                 </div>
               </div>
             ))}
+          {typingUser && (
+            <div className="p-2 my-2 rounded max-w-xs bg-gray-200 mr-auto">
+              <p className="text-sm text-gray-500">{typingUser} is typing...</p>
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Eingabefeld für Nachrichten */}
+        {/* Message Input */}
         <div className={`p-4 border-t flex gap-2 ${darkMode ? "bg-gray-800 border-gray-700" : "bg-white"}`}>
           <button
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
@@ -287,7 +351,7 @@ function Chat() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyPress={(e) => e.key === "Enter" && sendMessage()}
-            placeholder="Schreibe eine Nachricht..."
+            placeholder="Type a message..."
             className={`flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               darkMode ? "bg-gray-700 text-white" : "bg-gray-50"
             }`}
@@ -296,18 +360,18 @@ function Chat() {
             onClick={sendMessage}
             className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
-            Senden
+            Send
           </button>
         </div>
 
-        {/* Benachrichtigung für neue Nachrichten */}
+        {/* Notifications */}
         {newMessageNotification && (
           <div className="fixed bottom-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg">
             {newMessageNotification}
           </div>
         )}
 
-        {/* Kontextmenü */}
+        {/* Context Menu */}
         {contextMenu.visible && (
           <div
             className="absolute bg-white dark:bg-gray-800 shadow-lg rounded-lg p-2"
