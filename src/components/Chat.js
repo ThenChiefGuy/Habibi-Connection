@@ -34,7 +34,6 @@ function Chat() {
   const [newMessageNotification, setNewMessageNotification] = useState(null);
   const [darkMode, setDarkMode] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState(null);
-  const [editedText, setEditedText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [typingUser, setTypingUser] = useState(null);
   const messagesEndRef = useRef(null);
