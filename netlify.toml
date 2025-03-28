@@ -1,8 +1,19 @@
 [build]
-  command = "yarn install --ignore-engines && yarn build"
+  command = "yarn install --ignore-engines --network-timeout 600000 && yarn build"
   publish = "build"
+  functions = "functions"
 
 [build.environment]
-  NODE_VERSION = "18.x"
-  YARN_VERSION = "1.22.x"
+  NODE_VERSION = "18.17.1"
+  YARN_VERSION = "1.22.22"
   CI = "false"
+  NPM_FLAGS = "--legacy-peer-deps"
+
+[context.production.environment]
+  REACT_APP_ENV = "production"
+
+[context.deploy-preview.environment]
+  REACT_APP_ENV = "staging"
+
+[context.branch-deploy.environment]
+  REACT_APP_ENV = "development"
