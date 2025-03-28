@@ -1,0 +1,8 @@
+[build]
+  command = "yarn install --ignore-engines && yarn build"
+  publish = "build"
+
+[build.environment]
+  NODE_VERSION = "18.x"
+  YARN_VERSION = "1.22.x"
+  CI = "false"
