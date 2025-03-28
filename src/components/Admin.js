@@ -1,3 +1,4 @@
+// eslint-disable-next-line no-unused-vars
 import React, { useState, useEffect } from "react";
 import { db, auth } from "../firebase/firebase";
 import { collection, getDocs, deleteDoc, doc, query, orderBy, where } from "firebase/firestore";
