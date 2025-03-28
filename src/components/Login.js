@@ -24,16 +24,8 @@ function Login() {
         if (email === "admin@habibi-connections.com") {
           navigate("/admin");
         } else {
-<<<<<<< HEAD
           navigate("/chat");
         }
-=======
-          navigate("/chat")
-    
-      await signInWithEmailAndPassword(auth, email, password);
-      if (email === "habibi-connections.admin@gmail.com") { // Ersetze dies mit deiner Admin-E-Mail
-        navigate("/admin");
->>>>>>> b49277a089ae60ac64947f141a48c23482d98cc3
       } else {
         await createUserWithEmailAndPassword(auth, email, password);
         navigate("/profile");
