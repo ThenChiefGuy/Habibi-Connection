@@ -1,4 +1,3 @@
-// eslint-disable-next-line no-unused-vars
 import React, { useState, useEffect } from "react";
 import { db, auth } from "../firebase/firebase";
 import { doc, setDoc, getDoc } from "firebase/firestore";
@@ -8,14 +7,12 @@ import { FaUserCircle, FaCamera, FaArrowLeft, FaSave } from "react-icons/fa";
 function Profile() {
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
-  const [avatar, setAvatar] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const navigate = useNavigate();
 
-  // Load existing profile data
   useEffect(() => {
     const loadProfile = async () => {
       const user = auth.currentUser;
@@ -28,7 +25,7 @@ function Profile() {
         const data = docSnap.data();
         setName(data.name || "");
         setBio(data.bio || "");
-        setAvatarPreview(data.photoURL || ""); // This will be our Base64 string
+        setAvatarPreview(data.photoURL || "");
         setIsEditing(true);
       }
     };
@@ -39,7 +36,6 @@ function Profile() {
   const handleAvatarChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // Validate image size (under 1MB to keep Firestore documents small)
       if (file.size > 1024 * 1024) {
         setError("Image must be less than 1MB");
         return;
@@ -47,10 +43,9 @@ function Profile() {
 
       const reader = new FileReader();
       reader.onloadend = () => {
-        setAvatarPreview(reader.result); // This is the Base64 string
+        setAvatarPreview(reader.result);
       };
       reader.readAsDataURL(file);
-      setAvatar(file);
     }
   };
 
@@ -70,7 +65,7 @@ function Profile() {
         name,
         bio,
         email: user.email,
-        photoURL: avatarPreview || "", // Store Base64 string directly
+        photoURL: avatarPreview || "",
         lastUpdated: new Date()
       });
 
@@ -85,7 +80,6 @@ function Profile() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 to-purple-800 flex items-center justify-center p-4">
       <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
-        {/* Header */}
         <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-white">
           <div className="flex items-center justify-between">
             <button 
@@ -97,11 +91,10 @@ function Profile() {
             <h1 className="text-2xl font-bold text-center">
               {isEditing ? "Edit Profile" : "Create Profile"}
             </h1>
-            <div className="w-8"></div> {/* Spacer for alignment */}
+            <div className="w-8"></div>
           </div>
         </div>
 
-        {/* Profile Form */}
         <div className="p-6">
           {error && (
             <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-3 mb-6 rounded">
@@ -109,7 +102,6 @@ function Profile() {
             </div>
           )}
 
-          {/* Avatar Upload - Now using Base64 */}
           <div className="flex flex-col items-center mb-6">
             <div className="relative">
               <div className="w-32 h-32 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden border-4 border-white dark:border-gray-600 shadow-lg">
@@ -142,7 +134,6 @@ function Profile() {
             </p>
           </div>
 
-          {/* Name Input */}
           <div className="mb-4">
             <label className="block text-gray-700 dark:text-gray-300 font-medium mb-2">
               Display Name
@@ -157,7 +148,6 @@ function Profile() {
             />
           </div>
 
-          {/* Bio Input */}
           <div className="mb-6">
             <label className="block text-gray-700 dark:text-gray-300 font-medium mb-2">
               Bio

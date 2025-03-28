@@ -1,9 +1,8 @@
-// eslint-disable-next-line no-unused-vars
 import React, { useState } from "react";
 import { auth } from "../firebase/firebase";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
-import { FaUser, FaLock, FaEnvelope, FaEye, FaEyeSlash, FaGoogle, FaFacebook } from "react-icons/fa";
+import { FaLock, FaEnvelope, FaEye, FaEyeSlash, FaGoogle, FaFacebook } from "react-icons/fa";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -56,7 +55,6 @@ function Login() {
   };
 
   const handleSocialLogin = (provider) => {
-    // Implement social login logic here
     setError(`${provider} login will be implemented soon`);
   };
 

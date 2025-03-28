@@ -1,7 +1,6 @@
-// eslint-disable-next-line no-unused-vars
 import React, { useState, useEffect } from "react";
 import { db, auth } from "../firebase/firebase";
-import { collection, getDocs, deleteDoc, doc, query, orderBy, where } from "firebase/firestore";
+import { collection, getDocs, deleteDoc, doc, query, orderBy } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import { FaTrash, FaUserShield, FaSearch, FaArrowLeft, FaUserEdit, FaEnvelope } from "react-icons/fa";
 import { MdMessage, MdAdminPanelSettings } from "react-icons/md";
@@ -9,14 +8,12 @@ import { MdMessage, MdAdminPanelSettings } from "react-icons/md";
 function Admin() {
   const [users, setUsers] = useState([]);
   const [messages, setMessages] = useState([]);
-  const [selectedUser, setSelectedUser] = useState(null);
   const [error, setError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("users");
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
-  // Load all users
   useEffect(() => {
     const loadUsers = async () => {
       setIsLoading(true);
@@ -38,7 +35,6 @@ function Admin() {
     loadUsers();
   }, []);
 
-  // Load all messages
   useEffect(() => {
     const loadMessages = async () => {
       setIsLoading(true);
@@ -64,7 +60,6 @@ function Admin() {
     loadMessages();
   }, []);
 
-  // Delete user
   const deleteUser = async (userId) => {
     if (!window.confirm("Are you sure you want to delete this user?")) return;
     
@@ -76,7 +71,6 @@ function Admin() {
     }
   };
 
-  // Delete message
   const deleteMessage = async (messageId) => {
     if (!window.confirm("Are you sure you want to delete this message?")) return;
     
@@ -88,7 +82,6 @@ function Admin() {
     }
   };
 
-  // Filter users and messages based on search term
   const filteredUsers = users.filter(user =>
     user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.email.toLowerCase().includes(searchTerm.toLowerCase())
@@ -104,7 +97,6 @@ function Admin() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-gray-100 p-4">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="flex justify-between items-center mb-8 p-4 bg-gray-800 rounded-xl shadow-lg">
           <div className="flex items-center">
             <button
@@ -129,14 +121,12 @@ function Admin() {
           )}
         </div>
 
-        {/* Error Display */}
         {error && (
           <div className="bg-red-900/50 border-l-4 border-red-500 text-red-100 p-4 mb-6 rounded-lg">
             <p>{error}</p>
           </div>
         )}
 
-        {/* Search Bar */}
         <div className="mb-6 relative">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <FaSearch className="text-gray-400" />
@@ -150,7 +140,6 @@ function Admin() {
           />
         </div>
 
-        {/* Tabs */}
         <div className="flex border-b border-gray-700 mb-6">
           <button
             onClick={() => setActiveTab("users")}
@@ -168,14 +157,12 @@ function Admin() {
           </button>
         </div>
 
-        {/* Loading State */}
         {isLoading && (
           <div className="flex justify-center items-center p-8">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500"></div>
           </div>
         )}
 
-        {/* User Management Tab */}
         {activeTab === "users" && !isLoading && (
           <div className="bg-gray-800/50 rounded-xl shadow-lg overflow-hidden">
             <div className="overflow-x-auto">
@@ -238,7 +225,6 @@ function Admin() {
           </div>
         )}
 
-        {/* Message Management Tab */}
         {activeTab === "messages" && !isLoading && (
           <div className="bg-gray-800/50 rounded-xl shadow-lg overflow-hidden">
             <div className="overflow-x-auto">
@@ -293,7 +279,6 @@ function Admin() {
           </div>
         )}
 
-        {/* Stats Footer */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-gray-800/50 p-6 rounded-xl">
             <h3 className="text-lg font-medium text-purple-400 mb-2">Total Users</h3>
