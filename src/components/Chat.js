@@ -1,3 +1,4 @@
+/* eslint rule disable"*/
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { db, auth } from "../firebase/firebase";
 import { 
