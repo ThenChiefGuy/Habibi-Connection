@@ -10,7 +10,7 @@ import { useNavigate } from "react-router-dom";
 import { 
   FaSun, FaMoon, FaSearch, FaSmile,
   FaCheck, FaCheckDouble, FaUserCircle,
-  FaEdit, FaTrash
+  FaEdit, FaTrash, FaPaperclip, FaTimes
 } from "react-icons/fa";
 import { IoMdSend } from "react-icons/io";
 
@@ -32,7 +32,9 @@ function Chat() {
   const [typingUser, setTypingUser] = useState(null);
   const [onlineStatus, setOnlineStatus] = useState({});
   const [unreadCounts, setUnreadCounts] = useState({});
+  const [mediaPreview, setMediaPreview] = useState(null);
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
   // Check authentication
@@ -42,7 +44,7 @@ function Chat() {
     }
   }, [navigate]);
 
-  // Load all users
+  // Load all users (keep existing)
   useEffect(() => {
     const loadUsers = async () => {
       const usersSnapshot = await getDocs(collection(db, "users"));
@@ -55,7 +57,7 @@ function Chat() {
     loadUsers();
   }, []);
 
-  // Track online status
+  // Track online status (keep existing)
   useEffect(() => {
     const onlineStatusRef = collection(db, "onlineStatus");
     const unsubscribe = onSnapshot(onlineStatusRef, (snapshot) => {
@@ -68,7 +70,7 @@ function Chat() {
     return () => unsubscribe();
   }, []);
 
-  // Set user online status
+  // Set user online status (keep existing)
   useEffect(() => {
     if (!auth.currentUser) return;
     const onlineStatusRef = firestoreDoc(db, "onlineStatus", auth.currentUser.uid);
@@ -84,10 +86,10 @@ function Chat() {
     };
   }, []);
 
-  // Get chat ID
+  // Get chat ID (keep existing)
   const getChatId = (userId1, userId2) => [userId1, userId2].sort().join("_");
 
-  // Load messages
+  // Load messages (modified to handle images)
   useEffect(() => {
     let q;
     if (selectedUser) {
@@ -138,7 +140,7 @@ function Chat() {
     return () => unsubscribe();
   }, [selectedUser, messages.length]);
 
-  // Mark messages as read
+  // Mark messages as read (keep existing)
   useEffect(() => {
     if (!selectedUser) return;
     
@@ -165,7 +167,69 @@ function Chat() {
     markMessagesAsRead();
   }, [selectedUser]);
 
-  // Handle reactions
+  // Handle file selection for Base64 images
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Limit to 1MB for Base64
+    if (file.size > 1 * 1024 * 1024) {
+      alert("Please select an image smaller than 1MB");
+      return;
+    }
+
+    // Only allow image files
+    if (!file.type.match("image.*")) {
+      alert("Please select an image file (JPEG, PNG, etc.)");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setMediaPreview(e.target.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Send message (modified to handle images)
+  const sendMessage = async () => {
+    if ((!newMessage.trim() && !mediaPreview) || !auth.currentUser) return;
+    
+    try {
+      const messageData = {
+        sender: auth.currentUser.uid,
+        timestamp: serverTimestamp(),
+        isRead: false,
+      };
+
+      // Add image if available
+      if (mediaPreview) {
+        messageData.image = mediaPreview;
+        messageData.text = newMessage || "[Image]";
+      } else {
+        messageData.text = newMessage;
+      }
+
+      if (selectedUser) {
+        const chatId = getChatId(auth.currentUser.uid, selectedUser.id);
+        await addDoc(collection(db, "privateMessages"), {
+          ...messageData,
+          participants: [auth.currentUser.uid, selectedUser.id],
+          chatId,
+        });
+      } else {
+        await addDoc(collection(db, "messages"), messageData);
+      }
+
+      setNewMessage("");
+      setMediaPreview(null);
+      setShowEmojiPicker(false);
+    } catch (error) {
+      console.error("Error sending message:", error);
+    }
+  };
+
+  // Handle reactions (keep existing)
   const handleReaction = async (messageId, emoji) => {
     try {
       const message = messages.find((msg) => msg.id === messageId);
@@ -188,7 +252,7 @@ function Chat() {
     }
   };
 
-  // Typing indicator
+  // Typing indicator (keep existing)
   useEffect(() => {
     if (!selectedUser) return;
     const typingStatusRef = firestoreDoc(db, "typingStatus", auth.currentUser.uid);
@@ -215,7 +279,7 @@ function Chat() {
     };
   }, [selectedUser]);
 
-  // Listen for typing status
+  // Listen for typing status (keep existing)
   useEffect(() => {
     if (!selectedUser) return;
     const typingStatusRef = firestoreDoc(db, "typingStatus", selectedUser.id);
@@ -227,36 +291,7 @@ function Chat() {
     return () => unsubscribe();
   }, [selectedUser]);
 
-  // Send message
-  const sendMessage = async () => {
-    if (!newMessage.trim() || !auth.currentUser) return;
-    try {
-      const messageData = {
-        text: newMessage,
-        sender: auth.currentUser.uid,
-        timestamp: serverTimestamp(),
-        reactions: {},
-        isRead: false,
-      };
-
-      if (selectedUser) {
-        const chatId = getChatId(auth.currentUser.uid, selectedUser.id);
-        await addDoc(collection(db, "privateMessages"), {
-          ...messageData,
-          participants: [auth.currentUser.uid, selectedUser.id],
-          chatId,
-        });
-      } else {
-        await addDoc(collection(db, "messages"), messageData);
-      }
-      setNewMessage("");
-      setShowEmojiPicker(false);
-    } catch (error) {
-      console.error("Error sending message:", error);
-    }
-  };
-
-  // Delete message
+  // Delete message (keep existing)
   const deleteMessage = async (messageId) => {
     try {
       const message = messages.find((msg) => msg.id === messageId);
@@ -270,7 +305,7 @@ function Chat() {
     }
   };
 
-  // Edit message
+  // Edit message (keep existing)
   const editMessage = async (messageId, newText) => {
     try {
       const message = messages.find((msg) => msg.id === messageId);
@@ -284,7 +319,7 @@ function Chat() {
     }
   };
 
-  // Close context menu
+  // Close context menu (keep existing)
   useEffect(() => {
     const clickHandler = () => {
       if (contextMenu.visible) setContextMenu({ visible: false, messageId: null, position: { x: 0, y: 0 } });
@@ -293,7 +328,7 @@ function Chat() {
     return () => document.removeEventListener("click", clickHandler);
   }, [contextMenu.visible]);
 
-  // User Avatar component
+  // User Avatar component (keep existing)
   const UserAvatar = ({ user, size = 10, showStatus = false }) => {
     const bgColor = user.color || `hsl(${parseInt(user.id.slice(0, 8), 16) % 360}, 70%, 60%)`;
     
@@ -322,7 +357,7 @@ function Chat() {
 
   return (
     <div className={`flex h-screen ${darkMode ? "bg-gray-900 text-gray-100" : "bg-gray-50 text-gray-900"}`}>
-      {/* Sidebar */}
+      {/* Sidebar (keep existing) */}
       <div className={`w-80 border-r flex flex-col ${darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"}`}>
         <div className="p-4 border-b flex items-center justify-between">
           <h1 className="text-xl font-bold">Habibi Connections</h1>
@@ -400,7 +435,7 @@ function Chat() {
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
+        {/* Header (keep existing) */}
         <div className={`p-4 border-b flex justify-between items-center ${
           darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"
         }`}>
@@ -444,7 +479,7 @@ function Chat() {
           </div>
         </div>
 
-        {/* Messages */}
+        {/* Messages (modified to show images) */}
         <div className="flex-1 p-4 overflow-y-auto">
           {messages.length === 0 ? (
             <div className={`flex flex-col items-center justify-center h-full ${
@@ -492,6 +527,18 @@ function Chat() {
                         {msg.sender === auth.currentUser?.uid ? "You" : msg.senderName}
                       </p>
                     </div>
+                    
+                    {/* Display image if available */}
+                    {msg.image && (
+                      <div className="mb-2">
+                        <img 
+                          src={msg.image} 
+                          alt="Sent content" 
+                          className="max-w-full max-h-60 rounded-lg"
+                        />
+                      </div>
+                    )}
+                    
                     <div className="flex justify-between items-end">
                       <p className="break-words">{msg.text || "Message not available"}</p>
                       <div className="flex items-center ml-2">
@@ -552,8 +599,25 @@ function Chat() {
           )}
         </div>
 
-        {/* Message Input */}
+        {/* Message Input (modified for file upload) */}
         <div className={`p-4 border-t ${darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"}`}>
+          {/* Image preview */}
+          {mediaPreview && (
+            <div className="relative mb-2">
+              <img 
+                src={mediaPreview} 
+                alt="Preview" 
+                className="max-h-40 rounded-lg"
+              />
+              <button
+                onClick={() => setMediaPreview(null)}
+                className="absolute top-1 right-1 bg-gray-800 bg-opacity-70 text-white rounded-full p-1"
+              >
+                <FaTimes />
+              </button>
+            </div>
+          )}
+          
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowEmojiPicker(!showEmojiPicker)}
@@ -561,6 +625,22 @@ function Chat() {
             >
               <FaSmile className="text-xl" />
             </button>
+            
+            {/* File upload button */}
+            <button
+              onClick={() => fileInputRef.current.click()}
+              className={`p-2 rounded-full ${darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"}`}
+            >
+              <FaPaperclip className="text-xl" />
+            </button>
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              accept="image/*"
+              className="hidden"
+            />
+            
             {showEmojiPicker && (
               <div className="absolute bottom-16 right-4 z-10">
                 <EmojiPicker
@@ -571,6 +651,7 @@ function Chat() {
                 />
               </div>
             )}
+            
             <input
               type="text"
               value={newMessage}
@@ -581,10 +662,11 @@ function Chat() {
                 darkMode ? "bg-gray-700 placeholder-gray-400" : "bg-gray-100 placeholder-gray-500"
               }`}
             />
+            
             <button
               onClick={sendMessage}
-              disabled={!newMessage.trim()}
-              className={`p-2 rounded-full ${newMessage.trim() ? "bg-blue-500 text-white hover:bg-blue-600" : 
+              disabled={!newMessage.trim() && !mediaPreview}
+              className={`p-2 rounded-full ${(newMessage.trim() || mediaPreview) ? "bg-blue-500 text-white hover:bg-blue-600" : 
                 darkMode ? "bg-gray-700 text-gray-500" : "bg-gray-200 text-gray-400"}`}
             >
               <IoMdSend className="text-xl" />
@@ -592,7 +674,7 @@ function Chat() {
           </div>
         </div>
 
-        {/* Context Menu */}
+        {/* Context Menu (keep existing) */}
         {contextMenu.visible && (
           <div
             className={`absolute shadow-lg rounded-lg overflow-hidden z-20 ${darkMode ? "bg-gray-700" : "bg-white"}`}
