@@ -212,7 +212,7 @@ function Chat() {
     });
 
     return () => unsubscribe();
-  }, [selectedUser]);
+  }, [selectedUser, messages.length]); // Added messages.length as dependency
 
   // Load pinned messages
   useEffect(() => {
