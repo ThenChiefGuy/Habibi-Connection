@@ -13,7 +13,7 @@ import {
   FaCheck, FaCheckDouble, FaUserCircle,
   FaEdit, FaTrash, FaPaperclip, FaTimes,
   FaReply, FaThumbtack, FaPalette,
-  FaDownload
+  FaDownload, FaPoll, FaBell
 } from "react-icons/fa";
 import { IoMdSend } from "react-icons/io";
 
@@ -41,9 +41,17 @@ function Chat() {
   const [userStatuses, setUserStatuses] = useState({});
   const [theme, setTheme] = useState("default");
   const [showThemePicker, setShowThemePicker] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [showMentions, setShowMentions] = useState(false);
+  const [mentionPosition, setMentionPosition] = useState(0);
+  const [showSurvey, setShowSurvey] = useState(false);
+  const [surveyQuestion, setSurveyQuestion] = useState("");
+  const [surveyOptions, setSurveyOptions] = useState(["", ""]);
+  
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const mentionRef = useRef(null);
   const navigate = useNavigate();
 
   // Themes configuration
@@ -212,7 +220,7 @@ function Chat() {
     });
 
     return () => unsubscribe();
-  }, [selectedUser, messages.length]); // Added messages.length as dependency
+  }, [selectedUser, messages.length]);
 
   // Load pinned messages
   useEffect(() => {
@@ -330,6 +338,32 @@ function Chat() {
   const sendMessage = useCallback(async () => {
     if ((!newMessage.trim() && !mediaPreview) || !auth.currentUser) return;
     
+    // Process mentions
+    let processedMessage = newMessage;
+    const mentionRegex = /@(\w+)/g;
+    let match;
+    const mentionedUsers = new Set();
+    
+    while ((match = mentionRegex.exec(newMessage)) !== null) {
+      const username = match[1];
+      if (username === 'everyone') {
+        mentionedUsers.add('everyone');
+        processedMessage = processedMessage.replace(
+          `@${username}`,
+          `<span class="text-blue-500 font-medium">@${username}</span>`
+        );
+      } else {
+        const user = users.find(u => u.name === username);
+        if (user) {
+          mentionedUsers.add(user.id);
+          processedMessage = processedMessage.replace(
+            `@${username}`,
+            `<span class="text-blue-500 font-medium">@${username}</span>`
+          );
+        }
+      }
+    }
+
     try {
       const messageData = {
         sender: auth.currentUser.uid,
@@ -337,15 +371,17 @@ function Chat() {
         isRead: false,
         replyTo: replyingTo?.id || null,
         replyText: replyingTo?.text ? `${replyingTo.text.substring(0, 30)}${replyingTo.text.length > 30 ? "..." : ""}` : null,
-        replySender: replyingTo?.senderName || null
+        replySender: replyingTo?.senderName || null,
+        mentions: Array.from(mentionedUsers),
+        text: processedMessage
       };
 
       // Add image if available
       if (mediaPreview) {
         messageData.image = mediaPreview;
-        messageData.text = newMessage || "[Image]";
-      } else {
-        messageData.text = newMessage;
+        if (!newMessage.trim()) {
+          messageData.text = "<span class='text-blue-500'>[Image]</span>";
+        }
       }
 
       let collectionName;
@@ -360,6 +396,19 @@ function Chat() {
 
       await addDoc(collection(db, collectionName), messageData);
 
+      // Send notifications
+      mentionedUsers.forEach(userId => {
+        if (userId === 'everyone') {
+          users.forEach(user => {
+            if (user.id !== auth.currentUser.uid) {
+              showNotification(auth.currentUser.displayName, `@everyone: ${newMessage}`);
+            }
+          });
+        } else if (userId !== auth.currentUser.uid) {
+          showNotification(auth.currentUser.displayName, `You were mentioned: ${newMessage}`);
+        }
+      });
+
       setNewMessage("");
       setMediaPreview(null);
       setReplyingTo(null);
@@ -368,7 +417,7 @@ function Chat() {
     } catch (error) {
       console.error("Error sending message:", error);
     }
-  }, [newMessage, mediaPreview, replyingTo, selectedUser]);
+  }, [newMessage, mediaPreview, replyingTo, selectedUser, users]);
 
   // Pin/unpin message
   const togglePinMessage = async (messageId) => {
@@ -574,7 +623,7 @@ function Chat() {
           />
         ) : (
           <div 
-            className={`w-${size} h-${size} rounded-full flex items-center justify-center text-white font-bold`}
+            className={`w-${size} h-${size} rounded-full flex items-center justify-center text-white font-bold text-xs`}
             style={{ backgroundColor: bgColor }}
           >
             {user.name.charAt(0).toUpperCase()}
@@ -590,21 +639,95 @@ function Chat() {
   // Markdown formatting
   const formatText = (text) => {
     if (!text) return "";
-    
-    // Simple markdown parsing
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      .replace(/`(.*?)`/g, '<code class="inline-code">$1</code>')
-      .replace(/~~(.*?)~~/g, '<del>$1</del>');
+    return text;
   };
+
+  // Mention detection
+  useEffect(() => {
+    const handleInput = (e) => {
+      const text = e.target.value;
+      const caretPos = e.target.selectionStart;
+      const lastAtPos = text.lastIndexOf('@', caretPos - 1);
+      
+      if (lastAtPos > -1) {
+        const mentionText = text.slice(lastAtPos + 1, caretPos);
+        setMentionQuery(mentionText);
+        setMentionPosition(lastAtPos);
+        setShowMentions(true);
+      } else {
+        setShowMentions(false);
+      }
+    };
+
+    const input = document.querySelector('input[type="text"]');
+    input?.addEventListener('input', handleInput);
+    return () => input?.removeEventListener('input', handleInput);
+  }, []);
+
+  // Send survey
+  const sendSurvey = useCallback(async () => {
+    if (!surveyQuestion || surveyOptions.some(opt => !opt.trim())) return;
+
+    const surveyData = {
+      type: "survey",
+      question: surveyQuestion,
+      options: surveyOptions.map(opt => ({ text: opt, votes: [] })),
+      sender: auth.currentUser.uid,
+      timestamp: serverTimestamp()
+    };
+
+    try {
+      await addDoc(collection(db, selectedUser ? "privateMessages" : "messages"), surveyData);
+      setShowSurvey(false);
+      setSurveyQuestion("");
+      setSurveyOptions(["", ""]);
+    } catch (error) {
+      console.error("Error sending survey:", error);
+    }
+  }, [surveyQuestion, surveyOptions, selectedUser]);
+
+  // Handle survey vote
+  const handleVote = async (messageId, optionIndex) => {
+    try {
+      const messageRef = firestoreDoc(db, selectedUser ? "privateMessages" : "messages", messageId);
+      const messageSnap = await getDoc(messageRef);
+      
+      if (!messageSnap.exists()) return;
+      if (messageSnap.data().options[optionIndex].votes.includes(auth.currentUser.uid)) return;
+
+      const options = messageSnap.data().options.map((opt, index) => 
+        index === optionIndex ? 
+        { ...opt, votes: [...opt.votes, auth.currentUser.uid] } : 
+        opt
+      );
+
+      await updateDoc(messageRef, { options });
+    } catch (error) {
+      console.error("Error updating vote:", error);
+    }
+  };
+
+  // Notification Badge component
+  const NotificationBadge = ({ count }) => (
+    <div className="absolute -top-1 -right-1">
+      <div className="flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs">
+        {count}
+      </div>
+    </div>
+  );
+
+  // Total unread count
+  const totalUnread = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
 
   return (
     <div className={`flex h-screen ${currentTheme.bg} ${currentTheme.text}`}>
       {/* Sidebar */}
       <div className={`w-80 border-r flex flex-col ${darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"}`}>
         <div className="p-4 border-b flex items-center justify-between">
-          <h1 className="text-xl font-bold">Chat App</h1>
+          <div className="flex items-center">
+            <h1 className="text-xl font-bold">Habibi Connections</h1>
+            {totalUnread > 0 && <NotificationBadge count={totalUnread} />}
+          </div>
           <div className="flex gap-2">
             <button
               onClick={() => setDarkMode(!darkMode)}
@@ -687,7 +810,7 @@ function Chat() {
                 onClick={() => {
                   setSelectedUser(user);
                 }}
-                className={`w-full p-4 text-left flex items-center ${
+                className={`w-full p-4 text-left flex items-center relative ${
                   selectedUser?.id === user.id ? (darkMode ? "bg-gray-700" : "bg-blue-50 text-blue-600") : 
                   darkMode ? "hover:bg-gray-700" : "hover:bg-gray-50"
                 }`}
@@ -696,11 +819,7 @@ function Chat() {
                 <div className="flex-1 ml-3">
                   <div className="flex justify-between items-center">
                     <h3 className="font-medium">{user.name}</h3>
-                    {unreadCounts[user.id] > 0 && (
-                      <span className="bg-blue-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                        {unreadCounts[user.id]}
-                      </span>
-                    )}
+                    {unreadCounts[user.id] > 0 && <NotificationBadge count={unreadCounts[user.id]} />}
                   </div>
                   <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
                     {onlineStatus[user.id] ? 
@@ -816,7 +935,6 @@ function Chat() {
                   msg.senderName?.toLowerCase().includes(searchQuery.toLowerCase())
                 )
                 .map((msg, index) => {
-                  // Show date separator if needed
                   const showDateSeparator = index === 0 || 
                     (messages[index - 1].timestamp?.getDate() !== msg.timestamp?.getDate());
                   
@@ -830,105 +948,129 @@ function Chat() {
                         </div>
                       )}
                       
-                      <div
-                        className={`p-3 my-2 rounded-lg max-w-xs lg:max-w-md relative ${
-                          msg.sender === auth.currentUser?.uid
-                            ? "bg-blue-500 text-white ml-auto"
-                            : darkMode
-                            ? "bg-gray-700 text-white mr-auto"
-                            : currentTheme.message + " mr-auto"
-                        }`}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          setContextMenu({
-                            visible: true,
-                            messageId: msg.id,
-                            position: { x: e.clientX, y: e.clientY },
-                          });
-                        }}
-                      >
-                        {/* Reply preview */}
-                        {msg.replyTo && (
-                          <div className={`mb-2 p-2 rounded text-xs ${darkMode ? "bg-gray-600" : "bg-gray-300"}`}>
-                            <p className="font-medium">{msg.replySender || "User"}</p>
-                            <p className="truncate">{msg.replyText || "Message"}</p>
-                          </div>
-                        )}
-                        
-                        <div className="flex items-center mb-1">
-                          {msg.sender !== auth.currentUser?.uid && (
+                      {msg.type === 'survey' ? (
+                        <div className={`p-4 rounded-lg ${darkMode ? "bg-gray-600" : "bg-gray-200"}`}>
+                          <h4 className="font-bold mb-2">{msg.question}</h4>
+                          {msg.options.map((option, index) => (
                             <div 
-                              className="w-6 h-6 rounded-full mr-2 flex items-center justify-center text-white font-bold text-xs"
-                              style={{ backgroundColor: msg.senderColor }}
+                              key={index}
+                              className="mb-2 p-2 rounded cursor-pointer hover:bg-gray-400/20"
+                              onClick={() => handleVote(msg.id, index)}
                             >
-                              {msg.senderName.charAt(0).toUpperCase()}
+                              <div className="flex justify-between">
+                                <span>{option.text}</span>
+                                <span>{option.votes?.length || 0}</span>
+                              </div>
+                              <div className="h-1 bg-gray-300 rounded">
+                                <div 
+                                  className="h-full bg-blue-500 rounded"
+                                  style={{ width: `${((option.votes?.length || 0) / Math.max(...msg.options.map(o => o.votes?.length || 0)))*100}%` }}
+                                />
+                              </div>
                             </div>
-                          )}
-                          <p className="font-bold text-sm">
-                            {msg.sender === auth.currentUser?.uid ? "You" : msg.senderName}
-                          </p>
-                        </div>
-                        
-                        {/* Display image if available */}
-                        {msg.image && (
-                          <div className="mb-2">
-                            <img 
-                              src={msg.image} 
-                              alt="Sent content" 
-                              className="max-w-full max-h-60 rounded-lg"
-                            />
-                          </div>
-                        )}
-                        
-                        <div className="flex justify-between items-end">
-                          <p 
-                            className="break-words"
-                            dangerouslySetInnerHTML={{ __html: formatText(msg.text) || "Message not available" }}
-                          />
-                          <div className="flex items-center ml-2">
-                            {msg.timestamp && (
-                              <p className={`text-xs ${msg.sender === auth.currentUser?.uid ? "text-blue-100" : "text-gray-500"}`}>
-                                {formatTime(msg.timestamp)}
-                              </p>
-                            )}
-                            {msg.sender === auth.currentUser?.uid && (
-                              <span className="ml-1">
-                                {msg.isRead ? (
-                                  <FaCheckDouble className={darkMode ? "text-blue-300" : "text-blue-700"} />
-                                ) : (
-                                  <FaCheck className={darkMode ? "text-blue-300" : "text-blue-700"} />
-                                )}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        {msg.isEdited && (
-                          <p className={`text-xs italic ${msg.sender === auth.currentUser?.uid ? "text-blue-100" : "text-gray-500"}`}>
-                            edited
-                          </p>
-                        )}
-                        <div className="flex flex-wrap mt-1 gap-1">
-                          {Object.entries(msg.reactions || {}).map(([emoji, users]) => (
-                            users.length > 0 && (
-                              <button
-                                key={emoji}
-                                onClick={() => handleReaction(msg.id, emoji)}
-                                className={`text-xs px-1 rounded ${
-                                  users.includes(auth.currentUser?.uid) ? 
-                                    (darkMode ? "bg-blue-600" : "bg-blue-100") : 
-                                    (darkMode ? "bg-gray-600" : "bg-gray-100")
-                                }`}
-                                title={users.map(uid => {
-                                  const user = users.find(u => u.id === uid);
-                                  return user?.name || "Unknown";
-                                }).join(", ")}
-                              >
-                                {emoji} {users.length}
-                              </button>
-                            )
                           ))}
                         </div>
-                      </div>
+                      ) : (
+                        <div
+                          className={`p-3 my-2 rounded-lg max-w-xs lg:max-w-md relative ${
+                            msg.sender === auth.currentUser?.uid
+                              ? "bg-blue-500 text-white ml-auto"
+                              : darkMode
+                              ? "bg-gray-700 text-white mr-auto"
+                              : currentTheme.message + " mr-auto"
+                          }`}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setContextMenu({
+                              visible: true,
+                              messageId: msg.id,
+                              position: { x: e.clientX, y: e.clientY },
+                            });
+                          }}
+                        >
+                          {/* Reply preview */}
+                          {msg.replyTo && (
+                            <div className={`mb-2 p-2 rounded text-xs ${darkMode ? "bg-gray-600" : "bg-gray-300"}`}>
+                              <p className="font-medium">{msg.replySender || "User"}</p>
+                              <p className="truncate">{msg.replyText || "Message"}</p>
+                            </div>
+                          )}
+                          
+                          <div className="flex items-center mb-1">
+                            {msg.sender !== auth.currentUser?.uid && (
+                              <div 
+                                className="w-6 h-6 rounded-full mr-2 flex items-center justify-center text-white font-bold text-xs"
+                                style={{ backgroundColor: msg.senderColor }}
+                              >
+                                {msg.senderName.charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                            <p className="font-bold text-sm">
+                              {msg.sender === auth.currentUser?.uid ? "You" : msg.senderName}
+                            </p>
+                          </div>
+                          
+                          {/* Display image if available */}
+                          {msg.image && (
+                            <div className="mb-2">
+                              <img 
+                                src={msg.image} 
+                                alt="Sent content" 
+                                className="max-w-full max-h-60 rounded-lg"
+                              />
+                            </div>
+                          )}
+                          
+                          <div className="flex justify-between items-end">
+                            <p 
+                              className="break-words"
+                              dangerouslySetInnerHTML={{ __html: formatText(msg.text) || "Message not available" }}
+                            />
+                            <div className="flex items-center ml-2">
+                              {msg.timestamp && (
+                                <p className={`text-xs ${msg.sender === auth.currentUser?.uid ? "text-blue-100" : "text-gray-500"}`}>
+                                  {formatTime(msg.timestamp)}
+                                </p>
+                              )}
+                              {msg.sender === auth.currentUser?.uid && (
+                                <span className="ml-1">
+                                  {msg.isRead ? (
+                                    <FaCheckDouble className={darkMode ? "text-blue-300" : "text-blue-700"} />
+                                  ) : (
+                                    <FaCheck className={darkMode ? "text-blue-300" : "text-blue-700"} />
+                                  )}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {msg.isEdited && (
+                            <p className={`text-xs italic ${msg.sender === auth.currentUser?.uid ? "text-blue-100" : "text-gray-500"}`}>
+                              edited
+                            </p>
+                          )}
+                          <div className="flex flex-wrap mt-1 gap-1">
+                            {Object.entries(msg.reactions || {}).map(([emoji, users]) => (
+                              users.length > 0 && (
+                                <button
+                                  key={emoji}
+                                  onClick={() => handleReaction(msg.id, emoji)}
+                                  className={`text-xs px-1 rounded ${
+                                    users.includes(auth.currentUser?.uid) ? 
+                                      (darkMode ? "bg-blue-600" : "bg-blue-100") : 
+                                      (darkMode ? "bg-gray-600" : "bg-gray-100")
+                                  }`}
+                                  title={users.map(uid => {
+                                    const user = users.find(u => u.id === uid);
+                                    return user?.name || "Unknown";
+                                  }).join(", ")}
+                                >
+                                  {emoji} {users.length}
+                                </button>
+                              )
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </React.Fragment>
                   );
                 })}
@@ -994,6 +1136,14 @@ function Chat() {
               <FaSmile className="text-xl" />
             </button>
             
+            <button
+              onClick={() => setShowSurvey(true)}
+              className={`p-2 rounded-full ${darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"}`}
+              title="Create survey"
+            >
+              <FaPoll className="text-xl" />
+            </button>
+
             {/* File upload button */}
             <button
               onClick={() => fileInputRef.current.click()}
@@ -1020,13 +1170,50 @@ function Chat() {
                 />
               </div>
             )}
+
+            {showMentions && (
+              <div 
+                ref={mentionRef}
+                className={`absolute bottom-16 left-4 z-30 w-48 max-h-40 overflow-y-auto rounded-lg shadow-lg ${
+                  darkMode ? "bg-gray-700" : "bg-white"
+                }`}
+              >
+                {['everyone', ...users.map(u => u.name)]
+                  .filter(name => name.toLowerCase().includes(mentionQuery.toLowerCase()))
+                  .map(name => (
+                    <div
+                      key={name}
+                      onClick={() => {
+                        const newText = newMessage.slice(0, mentionPosition + 1) + name + ' ' + 
+                                      newMessage.slice(mentionPosition + 1 + mentionQuery.length);
+                        setNewMessage(newText);
+                        setShowMentions(false);
+                      }}
+                      className={`p-2 cursor-pointer ${darkMode ? "hover:bg-gray-600" : "hover:bg-gray-100"}`}
+                    >
+                      {name === 'everyone' ? (
+                        <>
+                          <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center mr-2">
+                            <span className="text-white text-sm">@</span>
+                          </div>
+                          <span>Everyone</span>
+                        </>
+                      ) : (
+                        <div className="flex items-center">
+                          <UserAvatar user={users.find(u => u.name === name)} size={6} />
+                          <span className="ml-2">{name}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
             
             <input
               type="text"
               value={newMessage}
               onChange={(e) => {
                 setNewMessage(e.target.value);
-                // Save draft to localStorage
                 localStorage.setItem(`draft_${selectedUser?.id || 'public'}`, e.target.value);
               }}
               onKeyPress={(e) => {
@@ -1052,6 +1239,50 @@ function Chat() {
             </button>
           </div>
         </div>
+
+        {/* Survey Creation Modal */}
+        {showSurvey && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className={`p-6 rounded-lg w-96 ${darkMode ? "bg-gray-800" : "bg-white"}`}>
+              <h3 className="text-lg font-bold mb-4">Create Survey</h3>
+              <input
+                type="text"
+                placeholder="Survey question"
+                value={surveyQuestion}
+                onChange={(e) => setSurveyQuestion(e.target.value)}
+                className={`w-full p-2 mb-4 rounded ${darkMode ? "bg-gray-700" : "bg-gray-100"}`}
+              />
+              {surveyOptions.map((opt, index) => (
+                <input
+                  key={index}
+                  type="text"
+                  placeholder={`Option ${index + 1}`}
+                  value={opt}
+                  onChange={(e) => {
+                    const newOptions = [...surveyOptions];
+                    newOptions[index] = e.target.value;
+                    setSurveyOptions(newOptions);
+                  }}
+                  className={`w-full p-2 mb-2 rounded ${darkMode ? "bg-gray-700" : "bg-gray-100"}`}
+                />
+              ))}
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  onClick={() => setShowSurvey(false)}
+                  className="px-4 py-2 rounded-lg bg-gray-500 text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={sendSurvey}
+                  className="px-4 py-2 rounded-lg bg-blue-500 text-white"
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Context Menu */}
         {contextMenu.visible && (
