@@ -698,8 +698,7 @@ function Chat() {
     };
 
     fetchLinkPreviews();
-  }, [messages]);
-
+  }, [messages, linkPreviews]);
   // Auto-save drafts
   useEffect(() => {
     const timer = setTimeout(() => {
