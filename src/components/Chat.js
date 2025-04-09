@@ -47,6 +47,11 @@ function Chat() {
   const [showSurvey, setShowSurvey] = useState(false);
   const [surveyQuestion, setSurveyQuestion] = useState("");
   const [surveyOptions, setSurveyOptions] = useState(["", ""]);
+  // New state variables
+  const [hoveredMessageId, setHoveredMessageId] = useState(null);
+  const [linkPreviews, setLinkPreviews] = useState({});
+  const [showStatusPicker, setShowStatusPicker] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(false);
   
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -54,7 +59,7 @@ function Chat() {
   const mentionRef = useRef(null);
   const navigate = useNavigate();
 
-  // Themes configuration
+  // Enhanced themes configuration
   const themes = {
     default: {
       light: { bg: "bg-gray-50", text: "text-gray-900", message: "bg-gray-200" },
@@ -71,6 +76,14 @@ function Chat() {
     forest: {
       light: { bg: "bg-green-50", text: "text-green-900", message: "bg-green-100" },
       dark: { bg: "bg-green-900", text: "text-green-100", message: "bg-green-800" }
+    },
+    midnight: {
+      light: { bg: "bg-gray-800", text: "text-gray-100", message: "bg-gray-700" },
+      dark: { bg: "bg-gray-900", text: "text-gray-100", message: "bg-gray-800" }
+    },
+    sunrise: {
+      light: { bg: "bg-gradient-to-b from-orange-100 to-yellow-50", text: "text-orange-900", message: "bg-orange-200" },
+      dark: { bg: "bg-gradient-to-b from-orange-900 to-yellow-800", text: "text-yellow-100", message: "bg-orange-800" }
     }
   };
 
@@ -279,7 +292,7 @@ function Chat() {
       
       const querySnapshot = await getDocs(q);
       querySnapshot.forEach(async (doc) => {
-        await updateDoc(doc.ref, { isRead: true });
+        await updateDoc(doc.ref, { isRead: true, readAt: serverTimestamp() });
       });
       
       setUnreadCounts(prev => ({
@@ -334,32 +347,49 @@ function Chat() {
     reader.readAsDataURL(file);
   };
 
+  // Enhanced formatText function with Markdown support
+  const formatText = (text) => {
+    if (!text) return "";
+    return text
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.*?)\*/g, "<em>$1</em>")
+      .replace(/`(.*?)`/g, "<code class='bg-gray-200 dark:bg-gray-600 px-1 rounded'>$1</code>")
+      .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" class="text-blue-500 hover:underline">$1</a>');
+  };
+
   // Send message with useCallback to prevent re-renders
   const sendMessage = useCallback(async () => {
     if ((!newMessage.trim() && !mediaPreview) || !auth.currentUser) return;
     
-    // Process mentions
+    // Process commands
     let processedMessage = newMessage;
-    const mentionRegex = /@(\w+)/g;
-    let match;
-    const mentionedUsers = new Set();
-    
-    while ((match = mentionRegex.exec(newMessage)) !== null) {
-      const username = match[1];
-      if (username === 'everyone') {
-        mentionedUsers.add('everyone');
-        processedMessage = processedMessage.replace(
-          `@${username}`,
-          `<span class="text-blue-500 font-medium">@${username}</span>`
-        );
-      } else {
-        const user = users.find(u => u.name === username);
-        if (user) {
-          mentionedUsers.add(user.id);
+    if (newMessage.startsWith("/me ")) {
+      processedMessage = `<em>${auth.currentUser.displayName} ${newMessage.slice(4)}</em>`;
+    } else if (newMessage.startsWith("/gif ")) {
+      processedMessage = `<div class="italic">[GIF: ${newMessage.slice(5)}]</div>`;
+    } else {
+      // Process mentions
+      const mentionRegex = /@(\w+)/g;
+      let match;
+      const mentionedUsers = new Set();
+      
+      while ((match = mentionRegex.exec(newMessage)) !== null) {
+        const username = match[1];
+        if (username === 'everyone') {
+          mentionedUsers.add('everyone');
           processedMessage = processedMessage.replace(
             `@${username}`,
             `<span class="text-blue-500 font-medium">@${username}</span>`
           );
+        } else {
+          const user = users.find(u => u.name === username);
+          if (user) {
+            mentionedUsers.add(user.id);
+            processedMessage = processedMessage.replace(
+              `@${username}`,
+              `<span class="text-blue-500 font-medium">@${username}</span>`
+            );
+          }
         }
       }
     }
@@ -372,7 +402,6 @@ function Chat() {
         replyTo: replyingTo?.id || null,
         replyText: replyingTo?.text ? `${replyingTo.text.substring(0, 30)}${replyingTo.text.length > 30 ? "..." : ""}` : null,
         replySender: replyingTo?.senderName || null,
-        mentions: Array.from(mentionedUsers),
         text: processedMessage
       };
 
@@ -397,17 +426,13 @@ function Chat() {
       await addDoc(collection(db, collectionName), messageData);
 
       // Send notifications
-      mentionedUsers.forEach(userId => {
-        if (userId === 'everyone') {
-          users.forEach(user => {
-            if (user.id !== auth.currentUser.uid) {
-              showNotification(auth.currentUser.displayName, `@everyone: ${newMessage}`);
-            }
-          });
-        } else if (userId !== auth.currentUser.uid) {
-          showNotification(auth.currentUser.displayName, `You were mentioned: ${newMessage}`);
-        }
-      });
+      if (newMessage.includes('@everyone') && !selectedUser) {
+        users.forEach(user => {
+          if (user.id !== auth.currentUser.uid) {
+            showNotification(auth.currentUser.displayName, `@everyone: ${newMessage}`);
+          }
+        });
+      }
 
       setNewMessage("");
       setMediaPreview(null);
@@ -630,94 +655,63 @@ function Chat() {
           </div>
         )}
         {showStatus && onlineStatus[user.id] && (
-          <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+          <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 ${
+            userStatuses[user.id] === "Busy" ? "bg-red-500" :
+            userStatuses[user.id] === "Away" ? "bg-yellow-500" :
+            "bg-green-500"
+          } ${darkMode ? "border-gray-800" : "border-white"}`}></div>
         )}
       </div>
     );
   };
 
-  // Markdown formatting
-  const formatText = (text) => {
-    if (!text) return "";
-    return text;
-  };
-
-  // Mention detection
+  // Link preview fetching effect
   useEffect(() => {
-    const handleInput = (e) => {
-      const text = e.target.value;
-      const caretPos = e.target.selectionStart;
-      const lastAtPos = text.lastIndexOf('@', caretPos - 1);
-      
-      if (lastAtPos > -1) {
-        const mentionText = text.slice(lastAtPos + 1, caretPos);
-        setMentionQuery(mentionText);
-        setMentionPosition(lastAtPos);
-        setShowMentions(true);
-      } else {
-        setShowMentions(false);
+    const fetchLinkPreviews = async () => {
+      const newPreviews = {};
+      for (const msg of messages) {
+        const urlMatch = msg.text?.match(/https?:\/\/[^\s]+/)?.[0];
+        if (urlMatch && !linkPreviews[msg.id]) {
+          try {
+            // Use a free CORS proxy to avoid mixed content issues
+            const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(urlMatch)}`);
+            const html = await response.text();
+            
+            // Simple DOM parser to get basic metadata
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            
+            newPreviews[msg.id] = {
+              url: urlMatch,
+              title: doc.querySelector('title')?.textContent || 'No title',
+              description: doc.querySelector('meta[name="description"]')?.getAttribute('content') || '',
+              image: doc.querySelector('meta[property="og:image"]')?.getAttribute('content') || ''
+            };
+          } catch (error) {
+            console.error("Error fetching link preview:", error);
+          }
+        }
+      }
+      if (Object.keys(newPreviews).length > 0) {
+        setLinkPreviews(prev => ({ ...prev, ...newPreviews }));
       }
     };
 
-    const input = document.querySelector('input[type="text"]');
-    input?.addEventListener('input', handleInput);
-    return () => input?.removeEventListener('input', handleInput);
-  }, []);
+    fetchLinkPreviews();
+  }, [messages]);
 
-  // Send survey
-  const sendSurvey = useCallback(async () => {
-    if (!surveyQuestion || surveyOptions.some(opt => !opt.trim())) return;
+  // Auto-save drafts
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (newMessage) {
+        localStorage.setItem(`draft_${selectedUser?.id || 'public'}`, newMessage);
+        setDraftSaved(true);
+        setTimeout(() => setDraftSaved(false), 2000);
+      }
+    }, 1000);
 
-    const surveyData = {
-      type: "survey",
-      question: surveyQuestion,
-      options: surveyOptions.map(opt => ({ text: opt, votes: [] })),
-      sender: auth.currentUser.uid,
-      timestamp: serverTimestamp()
-    };
-
-    try {
-      await addDoc(collection(db, selectedUser ? "privateMessages" : "messages"), surveyData);
-      setShowSurvey(false);
-      setSurveyQuestion("");
-      setSurveyOptions(["", ""]);
-    } catch (error) {
-      console.error("Error sending survey:", error);
-    }
-  }, [surveyQuestion, surveyOptions, selectedUser]);
-
-  // Handle survey vote
-  const handleVote = async (messageId, optionIndex) => {
-    try {
-      const messageRef = firestoreDoc(db, selectedUser ? "privateMessages" : "messages", messageId);
-      const messageSnap = await getDoc(messageRef);
-      
-      if (!messageSnap.exists()) return;
-      if (messageSnap.data().options[optionIndex].votes.includes(auth.currentUser.uid)) return;
-
-      const options = messageSnap.data().options.map((opt, index) => 
-        index === optionIndex ? 
-        { ...opt, votes: [...opt.votes, auth.currentUser.uid] } : 
-        opt
-      );
-
-      await updateDoc(messageRef, { options });
-    } catch (error) {
-      console.error("Error updating vote:", error);
-    }
-  };
-
-  // Notification Badge component
-  const NotificationBadge = ({ count }) => (
-    <div className="absolute -top-1 -right-1">
-      <div className="flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs">
-        {count}
-      </div>
-    </div>
-  );
-
-  // Total unread count
-  const totalUnread = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
+    return () => clearTimeout(timer);
+  }, [newMessage, selectedUser]);
 
   return (
     <div className={`flex h-screen ${currentTheme.bg} ${currentTheme.text}`}>
@@ -726,9 +720,58 @@ function Chat() {
         <div className="p-4 border-b flex items-center justify-between">
           <div className="flex items-center">
             <h1 className="text-xl font-bold">Habibi Connections</h1>
-            {totalUnread > 0 && <NotificationBadge count={totalUnread} />}
+            {Object.values(unreadCounts).reduce((a, b) => a + b, 0) > 0 && (
+              <div className="ml-2 flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs">
+                {Object.values(unreadCounts).reduce((a, b) => a + b, 0)}
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setShowStatusPicker(!showStatusPicker)}
+                className={`p-2 rounded-full ${darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"}`}
+                title="Set status"
+              >
+                <div className={`w-2 h-2 rounded-full ${
+                  userStatuses[auth.currentUser?.uid] === "Busy" ? "bg-red-500" :
+                  userStatuses[auth.currentUser?.uid] === "Away" ? "bg-yellow-500" :
+                  "bg-green-500"
+                }`}></div>
+              </button>
+              
+              {showStatusPicker && (
+                <div className={`absolute left-0 mt-2 w-40 rounded-lg shadow-lg z-10 ${
+                  darkMode ? "bg-gray-800 border border-gray-700" : "bg-white border border-gray-200"
+                }`}>
+                  <div className="p-2">
+                    <p className="text-xs font-semibold mb-1">Set your status:</p>
+                    {["Available", "Busy", "Away"].map((status) => (
+                      <button
+                        key={status}
+                        onClick={async () => {
+                          await setDoc(firestoreDoc(db, "userStatus", auth.currentUser.uid), {
+                            status,
+                            lastUpdated: serverTimestamp()
+                          });
+                          setShowStatusPicker(false);
+                        }}
+                        className={`w-full text-left px-2 py-1 text-sm rounded ${
+                          darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"
+                        }`}
+                      >
+                        <span className={`inline-block w-2 h-2 rounded-full mr-2 ${
+                          status === "Busy" ? "bg-red-500" :
+                          status === "Away" ? "bg-yellow-500" :
+                          "bg-green-500"
+                        }`}></span>
+                        {status}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setDarkMode(!darkMode)}
               className={`p-2 rounded-full ${darkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-100 hover:bg-gray-200"}`}
@@ -819,7 +862,11 @@ function Chat() {
                 <div className="flex-1 ml-3">
                   <div className="flex justify-between items-center">
                     <h3 className="font-medium">{user.name}</h3>
-                    {unreadCounts[user.id] > 0 && <NotificationBadge count={unreadCounts[user.id]} />}
+                    {unreadCounts[user.id] > 0 && (
+                      <div className="flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs">
+                        {unreadCounts[user.id]}
+                      </div>
+                    )}
                   </div>
                   <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
                     {onlineStatus[user.id] ? 
@@ -848,6 +895,9 @@ function Chat() {
                     {onlineStatus[selectedUser.id] ? 
                       (userStatuses[selectedUser.id] || "Online") : 
                       "Offline"}
+                    {typingUser && (
+                      <span className="italic ml-2">{typingUser} is typing...</span>
+                    )}
                   </p>
                 </div>
               </>
@@ -955,7 +1005,6 @@ function Chat() {
                             <div 
                               key={index}
                               className="mb-2 p-2 rounded cursor-pointer hover:bg-gray-400/20"
-                              onClick={() => handleVote(msg.id, index)}
                             >
                               <div className="flex justify-between">
                                 <span>{option.text}</span>
@@ -979,6 +1028,8 @@ function Chat() {
                               ? "bg-gray-700 text-white mr-auto"
                               : currentTheme.message + " mr-auto"
                           }`}
+                          onMouseEnter={() => setHoveredMessageId(msg.id)}
+                          onMouseLeave={() => setHoveredMessageId(null)}
                           onContextMenu={(e) => {
                             e.preventDefault();
                             setContextMenu({
@@ -988,6 +1039,26 @@ function Chat() {
                             });
                           }}
                         >
+                          {/* Quick reactions */}
+                          {hoveredMessageId === msg.id && (
+                            <div className={`absolute -top-3 right-2 flex gap-1 p-1 rounded-full shadow ${
+                              darkMode ? "bg-gray-700" : "bg-white"
+                            }`}>
+                              {["👍", "❤️", "😂", "😮"].map((emoji) => (
+                                <button
+                                  key={emoji}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleReaction(msg.id, emoji);
+                                  }}
+                                  className="text-sm hover:scale-125 transition-transform transform"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
                           {/* Reply preview */}
                           {msg.replyTo && (
                             <div className={`mb-2 p-2 rounded text-xs ${darkMode ? "bg-gray-600" : "bg-gray-300"}`}>
@@ -1018,6 +1089,30 @@ function Chat() {
                                 alt="Sent content" 
                                 className="max-w-full max-h-60 rounded-lg"
                               />
+                            </div>
+                          )}
+
+                          {/* Link preview */}
+                          {linkPreviews[msg.id] && (
+                            <div className={`mt-2 p-2 rounded-lg border ${
+                              darkMode ? "bg-gray-700 border-gray-600" : "bg-gray-100 border-gray-200"
+                            }`}>
+                              {linkPreviews[msg.id].image && (
+                                <img 
+                                  src={linkPreviews[msg.id].image} 
+                                  alt="Preview" 
+                                  className="w-full h-32 object-cover rounded-t-lg mb-2"
+                                />
+                              )}
+                              <a href={linkPreviews[msg.id].url} target="_blank" rel="noreferrer" className="block">
+                                <p className="font-bold text-sm truncate">{linkPreviews[msg.id].title}</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
+                                  {linkPreviews[msg.id].description}
+                                </p>
+                                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 truncate">
+                                  {new URL(linkPreviews[msg.id].url).hostname}
+                                </p>
+                              </a>
                             </div>
                           )}
                           
@@ -1074,19 +1169,6 @@ function Chat() {
                     </React.Fragment>
                   );
                 })}
-              {typingUser && (
-                <div className={`p-3 my-2 rounded-lg max-w-xs mr-auto ${
-                  darkMode ? "bg-gray-700" : currentTheme.message
-                }`}>
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 rounded-full bg-gray-500 animate-bounce"></div>
-                    <div className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: "0.2s" }}></div>
-                    <div className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: "0.4s" }}></div>
-                  </div>
-                  <p className="text-xs mt-1">{typingUser} is typing...</p>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
             </>
           )}
         </div>
@@ -1228,6 +1310,12 @@ function Chat() {
               }`}
             />
             
+            {draftSaved && (
+              <span className="text-xs text-gray-500 dark:text-gray-400 animate-pulse">
+                Draft saved
+              </span>
+            )}
+            
             <button
               onClick={sendMessage}
               disabled={!newMessage.trim() && !mediaPreview}
@@ -1274,7 +1362,7 @@ function Chat() {
                   Cancel
                 </button>
                 <button
-                  onClick={sendSurvey}
+                 
                   className="px-4 py-2 rounded-lg bg-blue-500 text-white"
                 >
                   Create
@@ -1333,8 +1421,8 @@ function Chat() {
                     setContextMenu({ visible: false, messageId: null, position: { x: 0, y: 0 } });
                   }}
                   className={`block w-full text-left p-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-600 ${
-                    darkMode ? "text-gray-200" : "text-gray-800"
-                  }`}
+                darkMode ? "text-gray-200" : "text-gray-800"
+              }`}
                 >
                   <FaEdit className="inline mr-2" />
                   Edit
@@ -1345,8 +1433,8 @@ function Chat() {
                     setContextMenu({ visible: false, messageId: null, position: { x: 0, y: 0 } });
                   }}
                   className={`block w-full text-left p-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-600 ${
-                    darkMode ? "text-red-400" : "text-red-500"
-                  }`}
+                darkMode ? "text-red-400" : "text-red-500"
+              }`}
                 >
                   <FaTrash className="inline mr-2" />
                   Delete
@@ -1373,3 +1461,4 @@ function Chat() {
 }
 
 export default Chat;
+//If you this you propably found my code pls don*t do anthing sus you goofy ah hacker(fake Hacker)
