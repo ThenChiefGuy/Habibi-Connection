@@ -515,7 +515,7 @@ function Chat() {
     };
 
     fetchLinkPreviews();
-  }, [messages]);
+  }, [messages, linkPreviews]);
 
   // Handle input changes for mentions and commands
   const handleInputChange = (e) => {
