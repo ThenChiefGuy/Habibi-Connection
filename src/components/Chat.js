@@ -47,19 +47,22 @@ function Chat() {
   const [showSurvey, setShowSurvey] = useState(false);
   const [surveyQuestion, setSurveyQuestion] = useState("");
   const [surveyOptions, setSurveyOptions] = useState(["", ""]);
-  // New state variables
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showStatusPicker, setShowStatusPicker] = useState(false);
   const [hoveredMessageId, setHoveredMessageId] = useState(null);
   const [linkPreviews, setLinkPreviews] = useState({});
-  const [showStatusPicker, setShowStatusPicker] = useState(false);
-  const [draftSaved, setDraftSaved] = useState(false);
-  
+  const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
+  const [commandPosition, setCommandPosition] = useState(0);
+
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const mentionRef = useRef(null);
+  const commandRef = useRef(null);
   const navigate = useNavigate();
 
-  // Enhanced themes configuration
+  // Themes configuration
   const themes = {
     default: {
       light: { bg: "bg-gray-50", text: "text-gray-900", message: "bg-gray-200" },
@@ -76,19 +79,137 @@ function Chat() {
     forest: {
       light: { bg: "bg-green-50", text: "text-green-900", message: "bg-green-100" },
       dark: { bg: "bg-green-900", text: "text-green-100", message: "bg-green-800" }
-    },
-    midnight: {
-      light: { bg: "bg-gray-800", text: "text-gray-100", message: "bg-gray-700" },
-      dark: { bg: "bg-gray-900", text: "text-gray-100", message: "bg-gray-800" }
-    },
-    sunrise: {
-      light: { bg: "bg-gradient-to-b from-orange-100 to-yellow-50", text: "text-orange-900", message: "bg-orange-200" },
-      dark: { bg: "bg-gradient-to-b from-orange-900 to-yellow-800", text: "text-yellow-100", message: "bg-orange-800" }
     }
   };
 
+  // Available commands
+  const commands = [
+    { name: "me", description: "Send action message (e.g., '/me is typing')" },
+    { name: "gif", description: "Search for a GIF (e.g., '/gif happy')" },
+    { name: "status", description: "Set your status (e.g., '/status busy')" },
+    { name: "poll", description: "Create a poll (e.g., '/poll Question?')" }
+  ];
+
+  // Status options
+  const statusOptions = [
+    { value: "Available", color: "bg-green-500" },
+    { value: "Busy", color: "bg-red-500" },
+    { value: "Away", color: "bg-yellow-500" }
+  ];
+
   // Get current theme colors
   const currentTheme = themes[theme][darkMode ? "dark" : "light"];
+
+  // Export chat history
+  const exportChatHistory = async () => {
+    try {
+      const chatData = messages.map(msg => ({
+        sender: msg.senderName,
+        timestamp: msg.timestamp?.toLocaleString(),
+        text: msg.text,
+        isPinned: msg.isPinned || false
+      }));
+
+      const blob = new Blob([JSON.stringify(chatData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chat_history_${selectedUser ? selectedUser.name : 'public'}_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Error exporting chat history:", error);
+      alert("Failed to export chat history");
+    }
+  };
+
+  // Handle voting on surveys
+  const handleVote = async (surveyId, optionIndex) => {
+    try {
+      const surveyRef = firestoreDoc(db, "messages", surveyId);
+      const surveyDoc = await getDoc(surveyRef);
+      
+      if (surveyDoc.exists()) {
+        const survey = surveyDoc.data();
+        const options = [...survey.options];
+        
+        // Remove existing vote if user already voted
+        options.forEach(option => {
+          if (option.votes?.includes(auth.currentUser.uid)) {
+            option.votes = option.votes.filter(uid => uid !== auth.currentUser.uid);
+          }
+        });
+        
+        // Add new vote
+        if (!options[optionIndex].votes) {
+          options[optionIndex].votes = [];
+        }
+        options[optionIndex].votes.push(auth.currentUser.uid);
+        
+        await updateDoc(surveyRef, { options });
+      }
+    } catch (error) {
+      console.error("Error voting on survey:", error);
+    }
+  };
+
+  // Send survey message
+  const sendSurvey = async () => {
+    if (!surveyQuestion.trim() || surveyOptions.some(opt => !opt.trim())) {
+      alert("Please fill in all survey fields");
+      return;
+    }
+
+    try {
+      const surveyData = {
+        type: 'survey',
+        sender: auth.currentUser.uid,
+        timestamp: serverTimestamp(),
+        question: surveyQuestion,
+        options: surveyOptions.map(opt => ({
+          text: opt,
+          votes: []
+        }))
+      };
+
+      const collectionName = selectedUser ? "privateMessages" : "messages";
+      if (selectedUser) {
+        const chatId = getChatId(auth.currentUser.uid, selectedUser.id);
+        surveyData.participants = [auth.currentUser.uid, selectedUser.id];
+        surveyData.chatId = chatId;
+      }
+
+      await addDoc(collection(db, collectionName), surveyData);
+      setShowSurvey(false);
+      setSurveyQuestion("");
+      setSurveyOptions(["", ""]);
+    } catch (error) {
+      console.error("Error sending survey:", error);
+      alert("Failed to send survey");
+    }
+  };
+
+  // Scroll handler
+  useEffect(() => {
+    const handleScroll = () => {
+      const container = messagesContainerRef.current;
+      if (container) {
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const atBottom = scrollHeight - scrollTop <= clientHeight + 50;
+        setIsAtBottom(atBottom);
+        setShowScrollButton(!atBottom);
+      }
+    };
+
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      handleScroll();
+      return () => container.removeEventListener('scroll', handleScroll);
+    }
+  }, []);
 
   // Check authentication
   useEffect(() => {
@@ -219,21 +340,18 @@ function Chat() {
         })
       );
       setMessages(messagesWithNames);
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-
-      if (selectedUser && messagesWithNames.length > messages.length) {
-        const lastMessage = messagesWithNames[messagesWithNames.length - 1];
-        if (lastMessage.sender !== auth.currentUser.uid) {
-          setUnreadCounts(prev => ({
-            ...prev,
-            [selectedUser.id]: (prev[selectedUser.id] || 0) + 1
-          }));
-        }
+      
+      if (isAtBottom) {
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }, 100);
+      } else {
+        setShowScrollButton(true);
       }
     });
 
     return () => unsubscribe();
-  }, [selectedUser, messages.length]);
+  }, [selectedUser, messages.length, isAtBottom]);
 
   // Load pinned messages
   useEffect(() => {
@@ -357,6 +475,74 @@ function Chat() {
       .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" class="text-blue-500 hover:underline">$1</a>');
   };
 
+  // Update status
+  const updateStatus = async (status) => {
+    try {
+      const statusRef = firestoreDoc(db, "userStatus", auth.currentUser.uid);
+      await updateDoc(statusRef, {
+        status,
+        lastUpdated: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error updating status:", error);
+    }
+  };
+
+  // Handle link previews
+  useEffect(() => {
+    const fetchLinkPreviews = async () => {
+      const newPreviews = {};
+      for (const msg of messages) {
+        const urlMatch = msg.text?.match(/https?:\/\/[^\s]+/)?.[0];
+        if (urlMatch && !linkPreviews[msg.id]) {
+          try {
+            // Simple link preview - in a real app you'd use a proper API
+            const url = new URL(urlMatch);
+            newPreviews[msg.id] = {
+              url: urlMatch,
+              title: url.hostname,
+              description: `Visit ${url.hostname}`,
+              domain: url.hostname.replace('www.', '')
+            };
+          } catch (error) {
+            console.error("Error creating link preview:", error);
+          }
+        }
+      }
+      if (Object.keys(newPreviews).length > 0) {
+        setLinkPreviews(prev => ({ ...prev, ...newPreviews }));
+      }
+    };
+
+    fetchLinkPreviews();
+  }, [messages]);
+
+  // Handle input changes for mentions and commands
+  const handleInputChange = (e) => {
+    const value = e.target.value;
+    setNewMessage(value);
+    
+    // Handle mentions
+    if (value.lastIndexOf('@') > value.lastIndexOf(' ')) {
+      const pos = value.lastIndexOf('@');
+      setMentionQuery(value.slice(pos + 1));
+      setMentionPosition(pos);
+      setShowMentions(true);
+    } else {
+      setShowMentions(false);
+    }
+    
+    // Handle commands
+    if (value.startsWith('/') && (value.match(/\//g) || []).length === 1) {
+      setCommandPosition(1);
+      setShowCommandSuggestions(true);
+    } else if (value.includes(' ')) {
+      setShowCommandSuggestions(false);
+    }
+    
+    localStorage.setItem(`draft_${selectedUser?.id || 'public'}`, value);
+  };
+
   // Send message with useCallback to prevent re-renders
   const sendMessage = useCallback(async () => {
     if ((!newMessage.trim() && !mediaPreview) || !auth.currentUser) return;
@@ -367,6 +553,11 @@ function Chat() {
       processedMessage = `<em>${auth.currentUser.displayName} ${newMessage.slice(4)}</em>`;
     } else if (newMessage.startsWith("/gif ")) {
       processedMessage = `<div class="italic">[GIF: ${newMessage.slice(5)}]</div>`;
+    } else if (newMessage.startsWith("/status ")) {
+      const status = newMessage.slice(7).trim();
+      await updateStatus(status);
+      setNewMessage("");
+      return;
     } else {
       // Process mentions
       const mentionRegex = /@(\w+)/g;
@@ -584,43 +775,25 @@ function Chat() {
       if (e.ctrlKey && e.key === "Enter") {
         sendMessage();
       }
-      // / to focus input
-      if (e.key === "/" && !e.target.matches('input, textarea')) {
-        e.preventDefault();
-        document.querySelector('input[type="text"]')?.focus();
+      // Escape to close menus
+      if (e.key === "Escape") {
+        setShowEmojiPicker(false);
+        setShowMentions(false);
+        setShowCommandSuggestions(false);
+        setShowStatusPicker(false);
+      }
+      // Arrow keys for suggestions
+      if (showMentions || showCommandSuggestions) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          // Implement arrow navigation for suggestions
+        }
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [sendMessage]);
-
-  // Export chat history
-  const exportChatHistory = () => {
-    const chatData = {
-      meta: {
-        type: selectedUser ? "private" : "public",
-        with: selectedUser?.name || "Public Chat",
-        exportedAt: new Date().toISOString()
-      },
-      messages: messages.map(msg => ({
-        sender: msg.senderName,
-        text: msg.text,
-        timestamp: msg.timestamp?.toISOString(),
-        image: msg.image ? true : false
-      }))
-    };
-
-    const blob = new Blob([JSON.stringify(chatData, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `chat_${selectedUser?.name || "public"}_${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
+  }, [sendMessage, showMentions, showCommandSuggestions]);
 
   // Format timestamp
   const formatTime = (date) => {
@@ -665,53 +838,6 @@ function Chat() {
     );
   };
 
-  // Link preview fetching effect
-  useEffect(() => {
-    const fetchLinkPreviews = async () => {
-      const newPreviews = {};
-      for (const msg of messages) {
-        const urlMatch = msg.text?.match(/https?:\/\/[^\s]+/)?.[0];
-        if (urlMatch && !linkPreviews[msg.id]) {
-          try {
-            // Use a free CORS proxy to avoid mixed content issues
-            const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(urlMatch)}`);
-            const html = await response.text();
-            
-            // Simple DOM parser to get basic metadata
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            
-            newPreviews[msg.id] = {
-              url: urlMatch,
-              title: doc.querySelector('title')?.textContent || 'No title',
-              description: doc.querySelector('meta[name="description"]')?.getAttribute('content') || '',
-              image: doc.querySelector('meta[property="og:image"]')?.getAttribute('content') || ''
-            };
-          } catch (error) {
-            console.error("Error fetching link preview:", error);
-          }
-        }
-      }
-      if (Object.keys(newPreviews).length > 0) {
-        setLinkPreviews(prev => ({ ...prev, ...newPreviews }));
-      }
-    };
-
-    fetchLinkPreviews();
-  }, [messages, linkPreviews]);
-  // Auto-save drafts
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (newMessage) {
-        localStorage.setItem(`draft_${selectedUser?.id || 'public'}`, newMessage);
-        setDraftSaved(true);
-        setTimeout(() => setDraftSaved(false), 2000);
-      }
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [newMessage, selectedUser]);
-
   return (
     <div className={`flex h-screen ${currentTheme.bg} ${currentTheme.text}`}>
       {/* Sidebar */}
@@ -726,6 +852,7 @@ function Chat() {
             )}
           </div>
           <div className="flex gap-2">
+            {/* Status dot button */}
             <div className="relative">
               <button
                 onClick={() => setShowStatusPicker(!showStatusPicker)}
@@ -736,7 +863,7 @@ function Chat() {
                   userStatuses[auth.currentUser?.uid] === "Busy" ? "bg-red-500" :
                   userStatuses[auth.currentUser?.uid] === "Away" ? "bg-yellow-500" :
                   "bg-green-500"
-                }`}></div>
+                }`} />
               </button>
               
               {showStatusPicker && (
@@ -745,32 +872,26 @@ function Chat() {
                 }`}>
                   <div className="p-2">
                     <p className="text-xs font-semibold mb-1">Set your status:</p>
-                    {["Available", "Busy", "Away"].map((status) => (
+                    {statusOptions.map((status) => (
                       <button
-                        key={status}
+                        key={status.value}
                         onClick={async () => {
-                          await setDoc(firestoreDoc(db, "userStatus", auth.currentUser.uid), {
-                            status,
-                            lastUpdated: serverTimestamp()
-                          });
+                          await updateStatus(status.value);
                           setShowStatusPicker(false);
                         }}
                         className={`w-full text-left px-2 py-1 text-sm rounded ${
                           darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"
                         }`}
                       >
-                        <span className={`inline-block w-2 h-2 rounded-full mr-2 ${
-                          status === "Busy" ? "bg-red-500" :
-                          status === "Away" ? "bg-yellow-500" :
-                          "bg-green-500"
-                        }`}></span>
-                        {status}
+                        <span className={`inline-block w-2 h-2 rounded-full mr-2 ${status.color}`}></span>
+                        {status.value}
                       </button>
                     ))}
                   </div>
                 </div>
               )}
             </div>
+            
             <button
               onClick={() => setDarkMode(!darkMode)}
               className={`p-2 rounded-full ${darkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-100 hover:bg-gray-200"}`}
@@ -833,6 +954,11 @@ function Chat() {
             <div className="flex-1">
               <div className="flex justify-between items-center">
                 <h3 className="font-medium">Public Chat</h3>
+                {!selectedUser && unreadCounts['public'] > 0 && (
+                  <div className="flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs">
+                    {unreadCounts['public']}
+                  </div>
+                )}
               </div>
               <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
                 {users.filter(u => onlineStatus[u.id]).length} online
@@ -963,8 +1089,9 @@ function Chat() {
 
         {/* Messages */}
         <div 
-          className="flex-1 p-4 overflow-y-auto"
           ref={messagesContainerRef}
+          className="flex-1 p-4 overflow-y-auto"
+          style={{ scrollBehavior: 'smooth' }}
         >
           {messages.length === 0 ? (
             <div className={`flex flex-col items-center justify-center h-full ${
@@ -1004,6 +1131,7 @@ function Chat() {
                             <div 
                               key={index}
                               className="mb-2 p-2 rounded cursor-pointer hover:bg-gray-400/20"
+                              onClick={() => handleVote(msg.id, index)}
                             >
                               <div className="flex justify-between">
                                 <span>{option.text}</span>
@@ -1038,7 +1166,7 @@ function Chat() {
                             });
                           }}
                         >
-                          {/* Quick reactions */}
+                          {/* Quick reactions on hover */}
                           {hoveredMessageId === msg.id && (
                             <div className={`absolute -top-3 right-2 flex gap-1 p-1 rounded-full shadow ${
                               darkMode ? "bg-gray-700" : "bg-white"
@@ -1050,14 +1178,14 @@ function Chat() {
                                     e.stopPropagation();
                                     handleReaction(msg.id, emoji);
                                   }}
-                                  className="text-sm hover:scale-125 transition-transform transform"
+                                  className="text-sm hover:scale-125 transition-transform"
                                 >
                                   {emoji}
                                 </button>
                               ))}
                             </div>
                           )}
-
+                          
                           {/* Reply preview */}
                           {msg.replyTo && (
                             <div className={`mb-2 p-2 rounded text-xs ${darkMode ? "bg-gray-600" : "bg-gray-300"}`}>
@@ -1090,26 +1218,24 @@ function Chat() {
                               />
                             </div>
                           )}
-
+                          
                           {/* Link preview */}
                           {linkPreviews[msg.id] && (
                             <div className={`mt-2 p-2 rounded-lg border ${
                               darkMode ? "bg-gray-700 border-gray-600" : "bg-gray-100 border-gray-200"
                             }`}>
-                              {linkPreviews[msg.id].image && (
-                                <img 
-                                  src={linkPreviews[msg.id].image} 
-                                  alt="Preview" 
-                                  className="w-full h-32 object-cover rounded-t-lg mb-2"
-                                />
-                              )}
-                              <a href={linkPreviews[msg.id].url} target="_blank" rel="noreferrer" className="block">
-                                <p className="font-bold text-sm truncate">{linkPreviews[msg.id].title}</p>
-                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
+                              <a 
+                                href={linkPreviews[msg.id].url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="block"
+                              >
+                                <p className="font-bold text-sm">{linkPreviews[msg.id].title}</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                   {linkPreviews[msg.id].description}
                                 </p>
-                                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 truncate">
-                                  {new URL(linkPreviews[msg.id].url).hostname}
+                                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                                  {linkPreviews[msg.id].domain}
                                 </p>
                               </a>
                             </div>
@@ -1170,7 +1296,39 @@ function Chat() {
                 })}
             </>
           )}
+          <div ref={messagesEndRef} />
         </div>
+
+        {/* WhatsApp-style scroll-to-bottom button */}
+        {showScrollButton && (
+          <button
+            onClick={() => {
+              messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+              setIsAtBottom(true);
+              setShowScrollButton(false);
+            }}
+            className={`fixed bottom-24 right-6 p-3 rounded-full shadow-lg z-10 ${
+              darkMode ? "bg-gray-700 text-white hover:bg-gray-600" 
+                      : "bg-white text-gray-800 hover:bg-gray-100"
+            } transition-colors duration-200 flex items-center justify-center`}
+            title="Scroll to bottom"
+          >
+            <svg 
+              xmlns="http://www.w3.org/2000/svg" 
+              className="h-6 w-6" 
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor"
+            >
+              <path 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                strokeWidth={2} 
+                d="M5 15l7-7 7 7" 
+              />
+            </svg>
+          </button>
+        )}
 
         {/* Replying to indicator */}
         {replyingTo && (
@@ -1289,14 +1447,35 @@ function Chat() {
                   ))}
               </div>
             )}
+
+            {showCommandSuggestions && (
+              <div 
+                ref={commandRef}
+                className={`absolute bottom-16 left-4 z-30 w-64 max-h-60 overflow-y-auto rounded-lg shadow-lg ${
+                  darkMode ? "bg-gray-700" : "bg-white"
+                }`}
+              >
+                {commands.map((cmd) => (
+                  <div
+                    key={cmd.name}
+                    onClick={() => {
+                      const newText = '/' + cmd.name + ' ';
+                      setNewMessage(newText);
+                      setShowCommandSuggestions(false);
+                    }}
+                    className={`p-2 cursor-pointer ${darkMode ? "hover:bg-gray-600" : "hover:bg-gray-100"}`}
+                  >
+                    <div className="font-medium">/{cmd.name}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">{cmd.description}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             
             <input
               type="text"
               value={newMessage}
-              onChange={(e) => {
-                setNewMessage(e.target.value);
-                localStorage.setItem(`draft_${selectedUser?.id || 'public'}`, e.target.value);
-              }}
+              onChange={handleInputChange}
               onKeyPress={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -1308,12 +1487,6 @@ function Chat() {
                 darkMode ? "bg-gray-700 placeholder-gray-400" : "bg-gray-100 placeholder-gray-500"
               }`}
             />
-            
-            {draftSaved && (
-              <span className="text-xs text-gray-500 dark:text-gray-400 animate-pulse">
-                Draft saved
-              </span>
-            )}
             
             <button
               onClick={sendMessage}
@@ -1361,7 +1534,7 @@ function Chat() {
                   Cancel
                 </button>
                 <button
-                 
+                  onClick={sendSurvey}
                   className="px-4 py-2 rounded-lg bg-blue-500 text-white"
                 >
                   Create
@@ -1420,8 +1593,8 @@ function Chat() {
                     setContextMenu({ visible: false, messageId: null, position: { x: 0, y: 0 } });
                   }}
                   className={`block w-full text-left p-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-600 ${
-                darkMode ? "text-gray-200" : "text-gray-800"
-              }`}
+                    darkMode ? "text-gray-200" : "text-gray-800"
+                  }`}
                 >
                   <FaEdit className="inline mr-2" />
                   Edit
@@ -1432,8 +1605,8 @@ function Chat() {
                     setContextMenu({ visible: false, messageId: null, position: { x: 0, y: 0 } });
                   }}
                   className={`block w-full text-left p-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-600 ${
-                darkMode ? "text-red-400" : "text-red-500"
-              }`}
+                    darkMode ? "text-red-400" : "text-red-500"
+                  }`}
                 >
                   <FaTrash className="inline mr-2" />
                   Delete
