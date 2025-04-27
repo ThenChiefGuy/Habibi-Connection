@@ -1,6 +1,5 @@
-/* eslint-disable no-unused-vars */
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { db, auth } from "../firebase/firebase";
+import { db, auth, storage } from "../firebase/firebase";
 import { 
   collection, addDoc, serverTimestamp, query, orderBy, 
   onSnapshot, getDoc, doc as firestoreDoc, getDocs, 
@@ -13,9 +12,11 @@ import {
   FaCheck, FaCheckDouble, FaUserCircle,
   FaEdit, FaTrash, FaPaperclip, FaTimes,
   FaReply, FaThumbtack, FaPalette,
-  FaDownload, FaPoll, FaBell
+  FaDownload, FaPoll, FaBell, FaUser,
+  FaCog, FaSignOutAlt
 } from "react-icons/fa";
 import { IoMdSend } from "react-icons/io";
+import { motion } from "framer-motion";
 
 function Chat() {
   // State variables
@@ -47,11 +48,22 @@ function Chat() {
   const [showSurvey, setShowSurvey] = useState(false);
   const [surveyQuestion, setSurveyQuestion] = useState("");
   const [surveyOptions, setSurveyOptions] = useState(["", ""]);
-  
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showStatusPicker, setShowStatusPicker] = useState(false);
+  const [hoveredMessageId, setHoveredMessageId] = useState(null);
+  const [linkPreviews, setLinkPreviews] = useState({});
+  const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
+  const [commandPosition, setCommandPosition] = useState(0);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [userProfile, setUserProfile] = useState(null);
+
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const mentionRef = useRef(null);
+  const commandRef = useRef(null);
+  const userMenuRef = useRef(null);
   const navigate = useNavigate();
 
   // Themes configuration
@@ -74,8 +86,253 @@ function Chat() {
     }
   };
 
+  // Commands configuration
+  const commands = [
+    { name: "me", description: "Send an action message (e.g., /me is typing)" },
+    { name: "gif", description: "Search for a GIF (e.g., /gif cat)" },
+    { name: "status", description: "Set your status (e.g., /status Busy)" },
+    { name: "poll", description: "Create a poll (e.g., /poll Question? Option1 Option2)" },
+    { name: "clear", description: "Clear the chat history" },
+    { name: "help", description: "Show available commands" }
+  ];
+
   // Get current theme colors
   const currentTheme = themes[theme][darkMode ? "dark" : "light"];
+
+  // Load user profile
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      if (!auth.currentUser) return;
+      const docRef = firestoreDoc(db, "users", auth.currentUser.uid);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setUserProfile(docSnap.data());
+      }
+    };
+    loadUserProfile();
+  }, []);
+
+  // Close user menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  // User Avatar component
+  const UserAvatar = ({ user, size = 10, showStatus = false, onClick }) => {
+    const bgColor = user.color || `hsl(${parseInt(user.id.slice(0, 8), 16) % 360}, 70%, 60%)`;
+    
+    return (
+      <div className="relative" onClick={onClick}>
+        {user.photoURL ? (
+          <img 
+            src={user.photoURL} 
+            alt={user.name} 
+            className={`w-${size} h-${size} rounded-full object-cover border-2 ${darkMode ? "border-gray-700" : "border-gray-200"}`}
+          />
+        ) : (
+          <div 
+            className={`w-${size} h-${size} rounded-full flex items-center justify-center text-white font-bold text-xs`}
+            style={{ backgroundColor: bgColor }}
+          >
+            {user.name.charAt(0).toUpperCase()}
+          </div>
+        )}
+        {showStatus && onlineStatus[user.id] && (
+          <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 ${
+            userStatuses[user.id] === "Busy" ? "bg-red-500" :
+            userStatuses[user.id] === "Away" ? "bg-yellow-500" :
+            "bg-green-500"
+          } ${darkMode ? "border-gray-800" : "border-white"}`}></div>
+        )}
+      </div>
+    );
+  };
+
+  // User Menu component
+  const UserMenu = () => {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 10 }}
+        transition={{ duration: 0.2 }}
+        ref={userMenuRef}
+        className={`absolute right-4 top-16 w-48 rounded-lg shadow-lg z-50 ${darkMode ? "bg-gray-800 border border-gray-700" : "bg-white border border-gray-200"}`}
+      >
+        <div className="p-4 border-b flex items-center">
+          <UserAvatar user={{ 
+            id: auth.currentUser?.uid, 
+            name: auth.currentUser?.displayName || "User",
+            photoURL: userProfile?.photoURL
+          }} size={10} />
+          <div className="ml-3">
+            <p className="font-medium">{auth.currentUser?.displayName || "User"}</p>
+            <p className="text-xs text-gray-500">
+              {userStatuses[auth.currentUser?.uid] || "Available"}
+            </p>
+          </div>
+        </div>
+        <div className="p-1">
+          <button
+            onClick={() => {
+              navigate("/profile");
+              setShowUserMenu(false);
+            }}
+            className={`w-full text-left px-4 py-2 text-sm flex items-center ${darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"}`}
+          >
+            <FaUser className="mr-2" /> Profile
+          </button>
+          <button
+            onClick={() => {
+              setDarkMode(!darkMode);
+              setShowUserMenu(false);
+            }}
+            className={`w-full text-left px-4 py-2 text-sm flex items-center ${darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"}`}
+          >
+            {darkMode ? <FaSun className="mr-2" /> : <FaMoon className="mr-2" />}
+            {darkMode ? "Light Mode" : "Dark Mode"}
+          </button>
+          <button
+            onClick={() => {
+              setShowThemePicker(!showThemePicker);
+              setShowUserMenu(false);
+            }}
+            className={`w-full text-left px-4 py-2 text-sm flex items-center ${darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"}`}
+          >
+            <FaPalette className="mr-2" /> Change Theme
+          </button>
+          <button
+            onClick={() => {
+              auth.signOut();
+              navigate("/login");
+            }}
+            className={`w-full text-left px-4 py-2 text-sm flex items-center ${darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"}`}
+          >
+            <FaSignOutAlt className="mr-2" /> Logout
+          </button>
+        </div>
+      </motion.div>
+    );
+  };
+
+  // Export chat history
+  const exportChatHistory = async () => {
+    try {
+      const chatData = messages.map(msg => ({
+        sender: msg.senderName,
+        timestamp: msg.timestamp?.toLocaleString(),
+        text: msg.text,
+        isPinned: msg.isPinned || false
+      }));
+
+      const blob = new Blob([JSON.stringify(chatData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chat_history_${selectedUser ? selectedUser.name : 'public'}_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Error exporting chat history:", error);
+      alert("Failed to export chat history");
+    }
+  };
+
+  // Handle voting on surveys
+  const handleVote = async (surveyId, optionIndex) => {
+    try {
+      const surveyRef = firestoreDoc(db, "messages", surveyId);
+      const surveyDoc = await getDoc(surveyRef);
+      
+      if (surveyDoc.exists()) {
+        const survey = surveyDoc.data();
+        const options = [...survey.options];
+        
+        // Remove existing vote if user already voted
+        options.forEach(option => {
+          if (option.votes?.includes(auth.currentUser.uid)) {
+            option.votes = option.votes.filter(uid => uid !== auth.currentUser.uid);
+          }
+        });
+        
+        // Add new vote
+        if (!options[optionIndex].votes) {
+          options[optionIndex].votes = [];
+        }
+        options[optionIndex].votes.push(auth.currentUser.uid);
+        
+        await updateDoc(surveyRef, { options });
+      }
+    } catch (error) {
+      console.error("Error voting on survey:", error);
+    }
+  };
+
+  // Send survey message
+  const sendSurvey = async () => {
+    if (!surveyQuestion.trim() || surveyOptions.some(opt => !opt.trim())) {
+      alert("Please fill in all survey fields");
+      return;
+    }
+
+    try {
+      const surveyData = {
+        type: 'survey',
+        sender: auth.currentUser.uid,
+        timestamp: serverTimestamp(),
+        question: surveyQuestion,
+        options: surveyOptions.map(opt => ({
+          text: opt,
+          votes: []
+        }))
+      };
+
+      const collectionName = selectedUser ? "privateMessages" : "messages";
+      if (selectedUser) {
+        const chatId = getChatId(auth.currentUser.uid, selectedUser.id);
+        surveyData.participants = [auth.currentUser.uid, selectedUser.id];
+        surveyData.chatId = chatId;
+      }
+
+      await addDoc(collection(db, collectionName), surveyData);
+      setShowSurvey(false);
+      setSurveyQuestion("");
+      setSurveyOptions(["", ""]);
+    } catch (error) {
+      console.error("Error sending survey:", error);
+      alert("Failed to send survey");
+    }
+  };
+
+  // Scroll handler
+  useEffect(() => {
+    const handleScroll = () => {
+      const container = messagesContainerRef.current;
+      if (container) {
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const atBottom = scrollHeight - scrollTop <= clientHeight + 50;
+        setIsAtBottom(atBottom);
+        setShowScrollButton(!atBottom);
+      }
+    };
+
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      handleScroll();
+      return () => container.removeEventListener('scroll', handleScroll);
+    }
+  }, []);
 
   // Check authentication
   useEffect(() => {
@@ -206,21 +463,18 @@ function Chat() {
         })
       );
       setMessages(messagesWithNames);
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-
-      if (selectedUser && messagesWithNames.length > messages.length) {
-        const lastMessage = messagesWithNames[messagesWithNames.length - 1];
-        if (lastMessage.sender !== auth.currentUser.uid) {
-          setUnreadCounts(prev => ({
-            ...prev,
-            [selectedUser.id]: (prev[selectedUser.id] || 0) + 1
-          }));
-        }
+      
+      if (isAtBottom) {
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }, 100);
+      } else {
+        setShowScrollButton(true);
       }
     });
 
     return () => unsubscribe();
-  }, [selectedUser, messages.length]);
+  }, [selectedUser, messages.length, isAtBottom]);
 
   // Load pinned messages
   useEffect(() => {
@@ -279,7 +533,7 @@ function Chat() {
       
       const querySnapshot = await getDocs(q);
       querySnapshot.forEach(async (doc) => {
-        await updateDoc(doc.ref, { isRead: true });
+        await updateDoc(doc.ref, { isRead: true, readAt: serverTimestamp() });
       });
       
       setUnreadCounts(prev => ({
@@ -334,32 +588,122 @@ function Chat() {
     reader.readAsDataURL(file);
   };
 
+  // Enhanced formatText function with Markdown support
+  const formatText = (text) => {
+    if (!text) return "";
+    return text
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.*?)\*/g, "<em>$1</em>")
+      .replace(/`(.*?)`/g, "<code class='bg-gray-200 dark:bg-gray-600 px-1 rounded'>$1</code>")
+      .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" class="text-blue-500 hover:underline">$1</a>');
+  };
+
+  // Update status
+  const updateStatus = async (status) => {
+    try {
+      const statusRef = firestoreDoc(db, "userStatus", auth.currentUser.uid);
+      await updateDoc(statusRef, {
+        status,
+        lastUpdated: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error updating status:", error);
+    }
+  };
+
+  // Handle link previews
+  useEffect(() => {
+    const fetchLinkPreviews = async () => {
+      const newPreviews = {};
+      for (const msg of messages) {
+        const urlMatch = msg.text?.match(/https?:\/\/[^\s]+/)?.[0];
+        if (urlMatch && !linkPreviews[msg.id]) {
+          try {
+            // Simple link preview - in a real app you'd use a proper API
+            const url = new URL(urlMatch);
+            newPreviews[msg.id] = {
+              url: urlMatch,
+              title: url.hostname,
+              description: `Visit ${url.hostname}`,
+              domain: url.hostname.replace('www.', '')
+            };
+          } catch (error) {
+            console.error("Error creating link preview:", error);
+          }
+        }
+      }
+      if (Object.keys(newPreviews).length > 0) {
+        setLinkPreviews(prev => ({ ...prev, ...newPreviews }));
+      }
+    };
+
+    fetchLinkPreviews();
+  }, [messages]);
+
+  // Handle input changes for mentions and commands
+  const handleInputChange = (e) => {
+    const value = e.target.value;
+    setNewMessage(value);
+    
+    // Handle mentions
+    if (value.lastIndexOf('@') > value.lastIndexOf(' ')) {
+      const pos = value.lastIndexOf('@');
+      setMentionQuery(value.slice(pos + 1));
+      setMentionPosition(pos);
+      setShowMentions(true);
+    } else {
+      setShowMentions(false);
+    }
+    
+    // Handle commands
+    if (value.startsWith('/') && (value.match(/\//g) || []).length === 1) {
+      setCommandPosition(1);
+      setShowCommandSuggestions(true);
+    } else if (value.includes(' ')) {
+      setShowCommandSuggestions(false);
+    }
+    
+    localStorage.setItem(`draft_${selectedUser?.id || 'public'}`, value);
+  };
+
   // Send message with useCallback to prevent re-renders
   const sendMessage = useCallback(async () => {
     if ((!newMessage.trim() && !mediaPreview) || !auth.currentUser) return;
     
-    // Process mentions
+    // Process commands
     let processedMessage = newMessage;
-    const mentionRegex = /@(\w+)/g;
-    let match;
-    const mentionedUsers = new Set();
-    
-    while ((match = mentionRegex.exec(newMessage)) !== null) {
-      const username = match[1];
-      if (username === 'everyone') {
-        mentionedUsers.add('everyone');
-        processedMessage = processedMessage.replace(
-          `@${username}`,
-          `<span class="text-blue-500 font-medium">@${username}</span>`
-        );
-      } else {
-        const user = users.find(u => u.name === username);
-        if (user) {
-          mentionedUsers.add(user.id);
+    if (newMessage.startsWith("/me ")) {
+      processedMessage = `<em>${auth.currentUser.displayName} ${newMessage.slice(4)}</em>`;
+    } else if (newMessage.startsWith("/gif ")) {
+      processedMessage = `<div class="italic">[GIF: ${newMessage.slice(5)}]</div>`;
+    } else if (newMessage.startsWith("/status ")) {
+      const status = newMessage.slice(7).trim();
+      await updateStatus(status);
+      setNewMessage("");
+      return;
+    } else {
+      // Process mentions
+      const mentionRegex = /@(\w+)/g;
+      let match;
+      const mentionedUsers = new Set();
+      
+      while ((match = mentionRegex.exec(newMessage)) !== null) {
+        const username = match[1];
+        if (username === 'everyone') {
+          mentionedUsers.add('everyone');
           processedMessage = processedMessage.replace(
             `@${username}`,
             `<span class="text-blue-500 font-medium">@${username}</span>`
           );
+        } else {
+          const user = users.find(u => u.name === username);
+          if (user) {
+            mentionedUsers.add(user.id);
+            processedMessage = processedMessage.replace(
+              `@${username}`,
+              `<span class="text-blue-500 font-medium">@${username}</span>`
+            );
+          }
         }
       }
     }
@@ -372,7 +716,6 @@ function Chat() {
         replyTo: replyingTo?.id || null,
         replyText: replyingTo?.text ? `${replyingTo.text.substring(0, 30)}${replyingTo.text.length > 30 ? "..." : ""}` : null,
         replySender: replyingTo?.senderName || null,
-        mentions: Array.from(mentionedUsers),
         text: processedMessage
       };
 
@@ -397,17 +740,13 @@ function Chat() {
       await addDoc(collection(db, collectionName), messageData);
 
       // Send notifications
-      mentionedUsers.forEach(userId => {
-        if (userId === 'everyone') {
-          users.forEach(user => {
-            if (user.id !== auth.currentUser.uid) {
-              showNotification(auth.currentUser.displayName, `@everyone: ${newMessage}`);
-            }
-          });
-        } else if (userId !== auth.currentUser.uid) {
-          showNotification(auth.currentUser.displayName, `You were mentioned: ${newMessage}`);
-        }
-      });
+      if (newMessage.includes('@everyone') && !selectedUser) {
+        users.forEach(user => {
+          if (user.id !== auth.currentUser.uid) {
+            showNotification(auth.currentUser.displayName, `@everyone: ${newMessage}`);
+          }
+        });
+      }
 
       setNewMessage("");
       setMediaPreview(null);
@@ -556,46 +895,29 @@ function Chat() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       // Ctrl+Enter to send message
-      if (e.ctrlKey && e.key === "Enter") {
+      if ((e.ctrlKey && e.key === "Enter") || e.key === "Enter") {
+        e.preventDefault();
         sendMessage();
       }
-      // / to focus input
-      if (e.key === "/" && !e.target.matches('input, textarea')) {
-        e.preventDefault();
-        document.querySelector('input[type="text"]')?.focus();
+      // Escape to close menus
+      if (e.key === "Escape") {
+        setShowEmojiPicker(false);
+        setShowMentions(false);
+        setShowCommandSuggestions(false);
+        setShowStatusPicker(false);
+      }
+      // Arrow keys for suggestions
+      if (showMentions || showCommandSuggestions) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          // Implement arrow navigation for suggestions
+        }
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [sendMessage]);
-
-  // Export chat history
-  const exportChatHistory = () => {
-    const chatData = {
-      meta: {
-        type: selectedUser ? "private" : "public",
-        with: selectedUser?.name || "Public Chat",
-        exportedAt: new Date().toISOString()
-      },
-      messages: messages.map(msg => ({
-        sender: msg.senderName,
-        text: msg.text,
-        timestamp: msg.timestamp?.toISOString(),
-        image: msg.image ? true : false
-      }))
-    };
-
-    const blob = new Blob([JSON.stringify(chatData, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `chat_${selectedUser?.name || "public"}_${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
+  }, [sendMessage, showMentions, showCommandSuggestions]);
 
   // Format timestamp
   const formatTime = (date) => {
@@ -609,143 +931,40 @@ function Chat() {
     return date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
   };
 
-  // User Avatar component
-  const UserAvatar = ({ user, size = 10, showStatus = false }) => {
-    const bgColor = user.color || `hsl(${parseInt(user.id.slice(0, 8), 16) % 360}, 70%, 60%)`;
-    
-    return (
-      <div className="relative">
-        {user.photoURL ? (
-          <img 
-            src={user.photoURL} 
-            alt={user.name} 
-            className={`w-${size} h-${size} rounded-full object-cover border-2 ${darkMode ? "border-gray-700" : "border-gray-200"}`}
-          />
-        ) : (
-          <div 
-            className={`w-${size} h-${size} rounded-full flex items-center justify-center text-white font-bold text-xs`}
-            style={{ backgroundColor: bgColor }}
-          >
-            {user.name.charAt(0).toUpperCase()}
-          </div>
-        )}
-        {showStatus && onlineStatus[user.id] && (
-          <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white dark:border-gray-800"></div>
-        )}
-      </div>
-    );
-  };
-
-  // Markdown formatting
-  const formatText = (text) => {
-    if (!text) return "";
-    return text;
-  };
-
-  // Mention detection
-  useEffect(() => {
-    const handleInput = (e) => {
-      const text = e.target.value;
-      const caretPos = e.target.selectionStart;
-      const lastAtPos = text.lastIndexOf('@', caretPos - 1);
-      
-      if (lastAtPos > -1) {
-        const mentionText = text.slice(lastAtPos + 1, caretPos);
-        setMentionQuery(mentionText);
-        setMentionPosition(lastAtPos);
-        setShowMentions(true);
-      } else {
-        setShowMentions(false);
-      }
-    };
-
-    const input = document.querySelector('input[type="text"]');
-    input?.addEventListener('input', handleInput);
-    return () => input?.removeEventListener('input', handleInput);
-  }, []);
-
-  // Send survey
-  const sendSurvey = useCallback(async () => {
-    if (!surveyQuestion || surveyOptions.some(opt => !opt.trim())) return;
-
-    const surveyData = {
-      type: "survey",
-      question: surveyQuestion,
-      options: surveyOptions.map(opt => ({ text: opt, votes: [] })),
-      sender: auth.currentUser.uid,
-      timestamp: serverTimestamp()
-    };
-
-    try {
-      await addDoc(collection(db, selectedUser ? "privateMessages" : "messages"), surveyData);
-      setShowSurvey(false);
-      setSurveyQuestion("");
-      setSurveyOptions(["", ""]);
-    } catch (error) {
-      console.error("Error sending survey:", error);
-    }
-  }, [surveyQuestion, surveyOptions, selectedUser]);
-
-  // Handle survey vote
-  const handleVote = async (messageId, optionIndex) => {
-    try {
-      const messageRef = firestoreDoc(db, selectedUser ? "privateMessages" : "messages", messageId);
-      const messageSnap = await getDoc(messageRef);
-      
-      if (!messageSnap.exists()) return;
-      if (messageSnap.data().options[optionIndex].votes.includes(auth.currentUser.uid)) return;
-
-      const options = messageSnap.data().options.map((opt, index) => 
-        index === optionIndex ? 
-        { ...opt, votes: [...opt.votes, auth.currentUser.uid] } : 
-        opt
-      );
-
-      await updateDoc(messageRef, { options });
-    } catch (error) {
-      console.error("Error updating vote:", error);
-    }
-  };
-
-  // Notification Badge component
-  const NotificationBadge = ({ count }) => (
-    <div className="absolute -top-1 -right-1">
-      <div className="flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs">
-        {count}
-      </div>
-    </div>
-  );
-
-  // Total unread count
-  const totalUnread = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
-
   return (
     <div className={`flex h-screen ${currentTheme.bg} ${currentTheme.text}`}>
       {/* Sidebar */}
       <div className={`w-80 border-r flex flex-col ${darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"}`}>
+        {/* Sidebar header with user menu */}
         <div className="p-4 border-b flex items-center justify-between">
           <div className="flex items-center">
             <h1 className="text-xl font-bold">Habibi Connections</h1>
-            {totalUnread > 0 && <NotificationBadge count={totalUnread} />}
+            {Object.values(unreadCounts).reduce((a, b) => a + b, 0) > 0 && (
+              <div className="ml-2 flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs">
+                {Object.values(unreadCounts).reduce((a, b) => a + b, 0)}
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
-            <button
-              onClick={() => setDarkMode(!darkMode)}
-              className={`p-2 rounded-full ${darkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-100 hover:bg-gray-200"}`}
-              title={darkMode ? "Light mode" : "Dark mode"}
-            >
-              {darkMode ? <FaSun className="text-yellow-300" /> : <FaMoon />}
-            </button>
-            <button
-              onClick={() => setShowThemePicker(!showThemePicker)}
-              className={`p-2 rounded-full ${darkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-100 hover:bg-gray-200"}`}
-              title="Change theme"
-            >
-              <FaPalette />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"
+              >
+                <UserAvatar 
+                  user={{ 
+                    id: auth.currentUser?.uid, 
+                    name: auth.currentUser?.displayName || "User",
+                    photoURL: userProfile?.photoURL
+                  }} 
+                  size={8} 
+                />
+              </button>
+              {showUserMenu && <UserMenu />}
+            </div>
           </div>
         </div>
-        
+
         {showThemePicker && (
           <div className={`p-2 border-b ${darkMode ? "bg-gray-700" : "bg-gray-100"}`}>
             <p className="text-sm mb-2">Select Theme:</p>
@@ -791,6 +1010,11 @@ function Chat() {
             <div className="flex-1">
               <div className="flex justify-between items-center">
                 <h3 className="font-medium">Public Chat</h3>
+                {!selectedUser && unreadCounts['public'] > 0 && (
+                  <div className="flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs">
+                    {unreadCounts['public']}
+                  </div>
+                )}
               </div>
               <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
                 {users.filter(u => onlineStatus[u.id]).length} online
@@ -819,7 +1043,11 @@ function Chat() {
                 <div className="flex-1 ml-3">
                   <div className="flex justify-between items-center">
                     <h3 className="font-medium">{user.name}</h3>
-                    {unreadCounts[user.id] > 0 && <NotificationBadge count={unreadCounts[user.id]} />}
+                    {unreadCounts[user.id] > 0 && (
+                      <div className="flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs">
+                        {unreadCounts[user.id]}
+                      </div>
+                    )}
                   </div>
                   <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
                     {onlineStatus[user.id] ? 
@@ -848,6 +1076,9 @@ function Chat() {
                     {onlineStatus[selectedUser.id] ? 
                       (userStatuses[selectedUser.id] || "Online") : 
                       "Offline"}
+                    {typingUser && (
+                      <span className="italic ml-2">{typingUser} is typing...</span>
+                    )}
                   </p>
                 </div>
               </>
@@ -914,8 +1145,9 @@ function Chat() {
 
         {/* Messages */}
         <div 
-          className="flex-1 p-4 overflow-y-auto"
           ref={messagesContainerRef}
+          className="flex-1 p-4 overflow-y-auto"
+          style={{ scrollBehavior: 'smooth' }}
         >
           {messages.length === 0 ? (
             <div className={`flex flex-col items-center justify-center h-full ${
@@ -979,6 +1211,8 @@ function Chat() {
                               ? "bg-gray-700 text-white mr-auto"
                               : currentTheme.message + " mr-auto"
                           }`}
+                          onMouseEnter={() => setHoveredMessageId(msg.id)}
+                          onMouseLeave={() => setHoveredMessageId(null)}
                           onContextMenu={(e) => {
                             e.preventDefault();
                             setContextMenu({
@@ -988,6 +1222,26 @@ function Chat() {
                             });
                           }}
                         >
+                          {/* Quick reactions on hover */}
+                          {hoveredMessageId === msg.id && (
+                            <div className={`absolute -top-3 right-2 flex gap-1 p-1 rounded-full shadow ${
+                              darkMode ? "bg-gray-700" : "bg-white"
+                            }`}>
+                              {["👍", "❤️", "😂", "😮"].map((emoji) => (
+                                <button
+                                  key={emoji}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleReaction(msg.id, emoji);
+                                  }}
+                                  className="text-sm hover:scale-125 transition-transform"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          
                           {/* Reply preview */}
                           {msg.replyTo && (
                             <div className={`mb-2 p-2 rounded text-xs ${darkMode ? "bg-gray-600" : "bg-gray-300"}`}>
@@ -1018,6 +1272,28 @@ function Chat() {
                                 alt="Sent content" 
                                 className="max-w-full max-h-60 rounded-lg"
                               />
+                            </div>
+                          )}
+                          
+                          {/* Link preview */}
+                          {linkPreviews[msg.id] && (
+                            <div className={`mt-2 p-2 rounded-lg border ${
+                              darkMode ? "bg-gray-700 border-gray-600" : "bg-gray-100 border-gray-200"
+                            }`}>
+                              <a 
+                                href={linkPreviews[msg.id].url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="block"
+                              >
+                                <p className="font-bold text-sm">{linkPreviews[msg.id].title}</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                  {linkPreviews[msg.id].description}
+                                </p>
+                                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                                  {linkPreviews[msg.id].domain}
+                                </p>
+                              </a>
                             </div>
                           )}
                           
@@ -1074,22 +1350,41 @@ function Chat() {
                     </React.Fragment>
                   );
                 })}
-              {typingUser && (
-                <div className={`p-3 my-2 rounded-lg max-w-xs mr-auto ${
-                  darkMode ? "bg-gray-700" : currentTheme.message
-                }`}>
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 rounded-full bg-gray-500 animate-bounce"></div>
-                    <div className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: "0.2s" }}></div>
-                    <div className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: "0.4s" }}></div>
-                  </div>
-                  <p className="text-xs mt-1">{typingUser} is typing...</p>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
             </>
           )}
+          <div ref={messagesEndRef} />
         </div>
+
+        {/* WhatsApp-style scroll-to-bottom button */}
+        {showScrollButton && (
+          <button
+            onClick={() => {
+              messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+              setIsAtBottom(true);
+              setShowScrollButton(false);
+            }}
+            className={`fixed bottom-24 right-6 p-3 rounded-full shadow-lg z-10 ${
+              darkMode ? "bg-gray-700 text-white hover:bg-gray-600" 
+                      : "bg-white text-gray-800 hover:bg-gray-100"
+            } transition-colors duration-200 flex items-center justify-center`}
+            title="Scroll to bottom"
+          >
+            <svg 
+              xmlns="http://www.w3.org/2000/svg" 
+              className="h-6 w-6" 
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor"
+            >
+              <path 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                strokeWidth={2} 
+                d="M5 15l7-7 7 7" 
+              />
+            </svg>
+          </button>
+        )}
 
         {/* Replying to indicator */}
         {replyingTo && (
@@ -1208,14 +1503,35 @@ function Chat() {
                   ))}
               </div>
             )}
+
+            {showCommandSuggestions && (
+              <div 
+                ref={commandRef}
+                className={`absolute bottom-16 left-4 z-30 w-64 max-h-60 overflow-y-auto rounded-lg shadow-lg ${
+                  darkMode ? "bg-gray-700" : "bg-white"
+                }`}
+              >
+                {commands.map((cmd) => (
+                  <div
+                    key={cmd.name}
+                    onClick={() => {
+                      const newText = '/' + cmd.name + ' ';
+                      setNewMessage(newText);
+                      setShowCommandSuggestions(false);
+                    }}
+                    className={`p-2 cursor-pointer ${darkMode ? "hover:bg-gray-600" : "hover:bg-gray-100"}`}
+                  >
+                    <div className="font-medium">/{cmd.name}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">{cmd.description}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             
             <input
               type="text"
               value={newMessage}
-              onChange={(e) => {
-                setNewMessage(e.target.value);
-                localStorage.setItem(`draft_${selectedUser?.id || 'public'}`, e.target.value);
-              }}
+              onChange={handleInputChange}
               onKeyPress={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -1296,7 +1612,7 @@ function Chat() {
             <div className="p-2 border-b dark:border-gray-600">
               <p className="text-xs font-medium dark:text-gray-300">Add Reaction</p>
               <div className="flex gap-1 mt-1">
-                {["👍", "❤️", "😂", "😮", "😢", "🙏"].map((emoji) => (
+                {["👍", "❤️", "😂", "😮", "😢", "👎"].map((emoji) => (
                   <button
                     key={emoji}
                     onClick={() => {

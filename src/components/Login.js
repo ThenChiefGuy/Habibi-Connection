@@ -1,8 +1,26 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { auth } from "../firebase/firebase";
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  sendPasswordResetEmail,
+  GoogleAuthProvider,
+  FacebookAuthProvider,
+  signInWithPopup
+} from "firebase/auth";
 import { useNavigate } from "react-router-dom";
-import { FaLock, FaEnvelope, FaEye, FaEyeSlash, FaGoogle, FaFacebook } from "react-icons/fa";
+import { 
+  FaLock, 
+  FaEnvelope, 
+  FaEye, 
+  FaEyeSlash, 
+  FaGoogle, 
+  FaFacebook,
+  FaSpinner,
+  FaCheck,
+  FaTimes
+} from "react-icons/fa";
+import { motion } from "framer-motion";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -13,9 +31,43 @@ function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [resetEmailSent, setResetEmailSent] = useState(false);
   const [showResetForm, setShowResetForm] = useState(false);
+  const [passwordStrength, setPasswordStrength] = useState(0);
+  const [emailValid, setEmailValid] = useState(false);
   const navigate = useNavigate();
 
+  // Check email validity
+  useEffect(() => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    setEmailValid(emailRegex.test(email));
+  }, [email]);
+
+  // Check password strength
+  useEffect(() => {
+    if (!password) {
+      setPasswordStrength(0);
+      return;
+    }
+    
+    let strength = 0;
+    if (password.length >= 8) strength += 1;
+    if (/[A-Z]/.test(password)) strength += 1;
+    if (/[0-9]/.test(password)) strength += 1;
+    if (/[^A-Za-z0-9]/.test(password)) strength += 1;
+    
+    setPasswordStrength(strength);
+  }, [password]);
+
   const handleAuth = async () => {
+    if (!emailValid) {
+      setError("Please enter a valid email address");
+      return;
+    }
+
+    if (!isLogin && passwordStrength < 2) {
+      setError("Password is too weak");
+      return;
+    }
+
     setIsLoading(true);
     setError("");
     try {
@@ -38,10 +90,11 @@ function Login() {
   };
 
   const handlePasswordReset = async () => {
-    if (!email) {
-      setError("Please enter your email address");
+    if (!emailValid) {
+      setError("Please enter a valid email address");
       return;
     }
+
     setIsLoading(true);
     try {
       await sendPasswordResetEmail(auth, email);
@@ -54,13 +107,69 @@ function Login() {
     }
   };
 
-  const handleSocialLogin = (provider) => {
-    setError(`${provider} login will be implemented soon`);
+  const handleSocialLogin = async (provider) => {
+    setIsLoading(true);
+    setError("");
+    try {
+      let authProvider;
+      if (provider === "Google") {
+        authProvider = new GoogleAuthProvider();
+        // Add any additional scopes if needed
+        // authProvider.addScope('profile');
+        // authProvider.addScope('email');
+      } else if (provider === "Facebook") {
+        authProvider = new FacebookAuthProvider();
+        // authProvider.addScope('public_profile');
+        // authProvider.addScope('email');
+      }
+
+      await signInWithPopup(auth, authProvider);
+      navigate("/chat");
+    } catch (error) {
+      console.error("Social login error:", error);
+      setError(error.message.replace("Firebase: ", ""));
+      
+      // Handle specific errors
+      if (error.code === "auth/operation-not-allowed") {
+        setError("Social login is not enabled. Contact support.");
+      } else if (error.code === "auth/popup-closed-by-user") {
+        setError("Login popup was closed. Please try again.");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getPasswordStrengthColor = () => {
+    switch (passwordStrength) {
+      case 0: return "bg-gray-200";
+      case 1: return "bg-red-500";
+      case 2: return "bg-yellow-500";
+      case 3: return "bg-blue-500";
+      case 4: return "bg-green-500";
+      default: return "bg-gray-200";
+    }
+  };
+
+  const getPasswordStrengthText = () => {
+    switch (passwordStrength) {
+      case 0: return "Very weak";
+      case 1: return "Weak";
+      case 2: return "Moderate";
+      case 3: return "Strong";
+      case 4: return "Very strong";
+      default: return "";
+    }
   };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-4">
-      <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
+      <motion.div 
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md"
+      >
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-pink-600 mb-2">
             Habibi Connections
@@ -71,17 +180,29 @@ function Login() {
         </div>
 
         {error && (
-          <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-3 mb-6 rounded">
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="bg-red-100 border-l-4 border-red-500 text-red-700 p-3 mb-6 rounded"
+          >
             <p>{error}</p>
-          </div>
+          </motion.div>
         )}
 
         {resetEmailSent ? (
-          <div className="bg-green-100 border-l-4 border-green-500 text-green-700 p-3 mb-6 rounded">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="bg-green-100 border-l-4 border-green-500 text-green-700 p-3 mb-6 rounded"
+          >
             <p>Password reset email sent! Check your inbox.</p>
-          </div>
+          </motion.div>
         ) : showResetForm ? (
-          <div className="mb-6">
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="mb-6"
+          >
             <h3 className="text-lg font-medium mb-4">Reset Password</h3>
             <div className="relative mb-4">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -92,16 +213,36 @@ function Login() {
                 placeholder="Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className={`w-full pl-10 p-3 border rounded-lg focus:outline-none focus:ring-2 ${
+                  emailValid ? "focus:ring-green-500" : "focus:ring-red-500"
+                }`}
               />
+              <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                {emailValid ? (
+                  <FaCheck className="text-green-500" />
+                ) : email ? (
+                  <FaTimes className="text-red-500" />
+                ) : null}
+              </div>
             </div>
             <div className="flex gap-2">
               <button
                 onClick={handlePasswordReset}
-                disabled={isLoading}
-                className="flex-1 bg-purple-600 text-white p-3 rounded-lg hover:bg-purple-700 transition duration-300 disabled:opacity-50"
+                disabled={isLoading || !emailValid}
+                className={`flex-1 flex items-center justify-center gap-2 ${
+                  isLoading || !emailValid
+                    ? "bg-purple-400 cursor-not-allowed"
+                    : "bg-purple-600 hover:bg-purple-700"
+                } text-white p-3 rounded-lg transition duration-300`}
               >
-                {isLoading ? "Sending..." : "Send Reset Link"}
+                {isLoading ? (
+                  <>
+                    <FaSpinner className="animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  "Send Reset Link"
+                )}
               </button>
               <button
                 onClick={() => setShowResetForm(false)}
@@ -110,7 +251,7 @@ function Login() {
                 Cancel
               </button>
             </div>
-          </div>
+          </motion.div>
         ) : (
           <>
             <div className="mb-4">
@@ -123,8 +264,17 @@ function Login() {
                   placeholder="Email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className={`w-full pl-10 p-3 border rounded-lg focus:outline-none focus:ring-2 ${
+                    emailValid ? "focus:ring-green-500" : "focus:ring-red-500"
+                  }`}
                 />
+                <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                  {emailValid ? (
+                    <FaCheck className="text-green-500" />
+                  ) : email ? (
+                    <FaTimes className="text-red-500" />
+                  ) : null}
+                </div>
               </div>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -142,9 +292,35 @@ function Login() {
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                 >
-                  {showPassword ? <FaEyeSlash className="text-gray-400" /> : <FaEye className="text-gray-400" />}
+                  {showPassword ? (
+                    <FaEyeSlash className="text-gray-400" />
+                  ) : (
+                    <FaEye className="text-gray-400" />
+                  )}
                 </button>
               </div>
+
+              {!isLogin && password && (
+                <div className="mt-2">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-xs text-gray-500">
+                      Password Strength: {getPasswordStrengthText()}
+                    </span>
+                  </div>
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div 
+                        key={i}
+                        className={`h-1 flex-1 rounded-full ${
+                          passwordStrength >= i 
+                            ? getPasswordStrengthColor()
+                            : "bg-gray-200"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {isLogin && (
@@ -158,23 +334,26 @@ function Login() {
               </div>
             )}
 
-            <button
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               onClick={handleAuth}
-              disabled={isLoading || !email || !password}
-              className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-3 rounded-lg hover:from-purple-700 hover:to-indigo-700 transition duration-300 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isLoading || !emailValid || (!isLogin && passwordStrength < 2)}
+              className={`w-full flex items-center justify-center gap-2 ${
+                isLoading || !emailValid || (!isLogin && passwordStrength < 2)
+                  ? "bg-gradient-to-r from-purple-400 to-indigo-400 cursor-not-allowed"
+                  : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+              } text-white p-3 rounded-lg transition duration-300 shadow-md`}
             >
               {isLoading ? (
-                <span className="flex items-center justify-center">
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
+                <>
+                  <FaSpinner className="animate-spin" />
                   {isLogin ? "Logging in..." : "Registering..."}
-                </span>
+                </>
               ) : (
                 isLogin ? "Login" : "Register"
               )}
-            </button>
+            </motion.button>
 
             <div className="flex items-center my-6">
               <div className="flex-1 border-t border-gray-300"></div>
@@ -183,25 +362,38 @@ function Login() {
             </div>
 
             <div className="flex gap-4 mb-6">
-              <button
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => handleSocialLogin("Google")}
-                className="flex-1 flex items-center justify-center gap-2 bg-white border border-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-50 transition duration-300"
+                disabled={isLoading}
+                className={`flex-1 flex items-center justify-center gap-2 bg-white border border-gray-300 text-gray-700 p-3 rounded-lg ${
+                  isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-gray-50"
+                } transition duration-300`}
               >
                 <FaGoogle className="text-red-500" />
                 <span>Google</span>
-              </button>
-              <button
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => handleSocialLogin("Facebook")}
-                className="flex-1 flex items-center justify-center gap-2 bg-white border border-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-50 transition duration-300"
+                disabled={isLoading}
+                className={`flex-1 flex items-center justify-center gap-2 bg-white border border-gray-300 text-gray-700 p-3 rounded-lg ${
+                  isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-gray-50"
+                } transition duration-300`}
               >
                 <FaFacebook className="text-blue-600" />
                 <span>Facebook</span>
-              </button>
+              </motion.button>
             </div>
 
             <div className="text-center">
               <button
-                onClick={() => setIsLogin(!isLogin)}
+                onClick={() => {
+                  setIsLogin(!isLogin);
+                  setError("");
+                }}
                 className="text-purple-600 hover:text-purple-800 font-medium"
               >
                 {isLogin ? "Need an account? Register" : "Already have an account? Login"}
@@ -209,7 +401,7 @@ function Login() {
             </div>
           </>
         )}
-      </div>
+      </motion.div>
     </div>
   );
 }
