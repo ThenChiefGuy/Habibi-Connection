@@ -445,23 +445,31 @@ function Chat() {
     }
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
+      if (snapshot.empty) {
+        setMessages([]); // Prevents crash if no messages exist
+        return;
+      }
+
       const messagesWithNames = await Promise.all(
         snapshot.docs.map(async (doc) => {
           const message = doc.data();
           const userDoc = await getDoc(firestoreDoc(db, "users", message.sender));
+
           return {
             id: doc.id,
             ...message,
             senderName: userDoc.exists() ? userDoc.data().name : "Unknown",
-            senderColor: userDoc.exists() ? 
-              `hsl(${parseInt(message.sender.slice(0, 8), 16) % 360}, 70%, 60%)` : "#666",
-            timestamp: message.timestamp?.toDate(),
+            senderColor: userDoc.exists() 
+              ? `hsl(${parseInt(message.sender.slice(0, 8), 16) % 360}, 70%, 60%)`
+              : "#666",
+            timestamp: message.timestamp?.toDate?.() || null, // safe check
             reactions: message.reactions || {},
             isEdited: message.isEdited || false,
             isRead: message.isRead || false,
           };
         })
       );
+
       setMessages(messagesWithNames);
       
       if (isAtBottom) {
@@ -474,7 +482,7 @@ function Chat() {
     });
 
     return () => unsubscribe();
-  }, [selectedUser, messages.length, isAtBottom]);
+  }, [selectedUser, isAtBottom]); // removed messages.length from dependency array to prevent infinite loop
 
   // Load pinned messages
   useEffect(() => {
